@@ -1,4 +1,4 @@
 *.res
 *.ppm
 *.png
-*.exe
+!download/SnowDesk.exe
