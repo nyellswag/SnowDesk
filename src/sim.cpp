@@ -289,7 +289,7 @@ void World::cursorStep(float dt) {
     }
 
     // moving through a drift ploughs the snow out of the way
-    if (speed > 40.0f * S) {
+    if (speed > 300.0f * S) {   // only a quick swipe ploughs; slow aiming leaves the snow alone
         int x0 = std::max(0, (int)(ox - R)), x1 = std::min(W - 1, (int)(ox + R));
         float carried = 0, cxSum = 0;
         auto plough = [&](std::vector<float>& h, int c, int col, float base) {
@@ -325,7 +325,7 @@ void World::cursorStep(float dt) {
         float d = std::sqrt(dx * dx + dy * dy), minD = b.r + R * 0.7f;
         if (d >= minD || d < 1e-3f) continue;
         float nx = dx / d;
-        if (b.state == BALL_REST && speed < 30.0f * S) continue;   // resting cursor doesn't shove
+        if (b.noKick > 0 || speed < 500.0f * S) continue;   // only a fast flick kicks a snowball
         b.x = ox + nx * minD;
         if (b.state == BALL_REST) { b.state = BALL_FLY; b.support = -1; b.vy = -40.0f * S; }
         b.thrown = false;
@@ -359,10 +359,20 @@ void World::step(float dt) {
             if (p.x < -60) p.x += W + 120;
             if (p.x > W + 60) p.x -= W + 120;
         } else {
+            float x0 = p.x;
             p.vy = std::min(p.vy + g * dt, 900.0f * S);
             p.vx *= 0.995f;
             p.x += p.vx * dt;
             p.y += p.vy * dt;
+            int wi = solidWindowAt(p.x, p.y, 0.0f);
+            if (wi >= 0) {
+                const WinRect& w = wins[wi];
+                if (y0 >= w.t) {                       // entered through a side or the bottom: bounce off
+                    if (x0 < w.l) { p.x = w.l - 0.5f; p.vx = -std::fabs(p.vx) * 0.3f; }
+                    else if (x0 >= w.r) { p.x = w.r + 0.5f; p.vx = std::fabs(p.vx) * 0.3f; }
+                    else if (y0 >= w.b) { p.y = w.b + 0.5f; p.vy = std::fabs(p.vy) * 0.2f; }
+                }
+            }
             if (p.x < 0) { p.x = 0; p.vx = -p.vx * 0.3f; }
             if (p.x > W - 1) { p.x = (float)W - 1; p.vx = -p.vx * 0.3f; }
         }
@@ -429,16 +439,36 @@ void World::collect(Ball& b, float dt) {
     }
 }
 
-void World::splat(int i) {
+// Topmost window under a point (rect grown by `grow`), if it is a solid one (normal app window).
+int World::solidWindowAt(float x, float y, float grow) const {
+    for (size_t i = 0; i < wins.size(); i++) {
+        const WinRect& w = wins[i];
+        bool inGrown = x >= w.l - grow && x < w.r + grow && y >= w.t - grow && y < w.b + grow;
+        if (!inGrown) continue;
+        if (w.pileable) return (int)i;
+        if (x >= w.l && x < w.r && y >= w.t && y < w.b) return -1;   // covered by a maximized/other window
+    }
+    return -1;
+}
+
+// Break a snowball against a surface with outward normal (nx, ny): snow sprays back off the surface
+// and slides along it, keeping part of the ball's sideways motion.
+void World::splat(int i, float nx, float ny) {
     Ball& b = balls[i];
     if (b.state == BALL_DEAD) return;
     int n = clampi((int)(b.vol / 5.0f), 8, 300);
     float m = b.vol * 0.65f / n;      // ~35% turns into powder and vanishes
+    float tx = -ny, ty = nx;          // surface tangent
+    float vt = b.vx * tx + b.vy * ty; // ball speed along the surface
+    float vn = std::fabs(b.vx * nx + b.vy * ny);
+    float base = std::atan2(ny, nx);
     for (int k = 0; k < n; k++) {
-        float a = rndr(0, 2 * PI), rr = b.r * std::sqrt(rnd());
-        float sp = rndr(60, 320) * S;
-        spawnChunk(b.x + std::cos(a) * rr, b.y + std::sin(a) * rr,
-                   std::cos(a) * sp * 1.4f + b.vx * 0.25f, -std::fabs(std::sin(a)) * sp * 0.8f - 60.0f * S, m);
+        float a = base + rndr(-1.35f, 1.35f);
+        float sp = rndr(40.0f, 140.0f) * S + vn * rndr(0.05f, 0.22f);
+        float ox = rndr(-0.7f, 0.7f) * b.r, on = rndr(0.0f, 0.35f) * b.r + 1.5f * S;
+        spawnChunk(b.x + tx * ox + nx * on, b.y + ty * ox + ny * on,
+                   std::cos(a) * sp + tx * vt * rndr(0.15f, 0.45f),
+                   std::sin(a) * sp + ty * vt * rndr(0.15f, 0.45f), m);
     }
     b.state = BALL_DEAD;
     if (held == i) held = -1;
@@ -472,6 +502,7 @@ void World::stepBalls(float dt) {
         Ball& b = balls[i];
         if (b.state == BALL_DEAD) continue;
         b.r = std::sqrt(b.vol / PI);
+        if (b.noKick > 0) b.noKick -= dt;
 
         if (b.state == BALL_HELD) {
             b.x = mx; b.y = my;
@@ -500,9 +531,40 @@ void World::stepBalls(float dt) {
         if (b.x + b.r > W) { b.x = W - b.r; b.vx = -b.vx * 0.35f; }
         float speed = std::sqrt(b.vx * b.vx + b.vy * b.vy);
 
-        uint64_t wid = windowAt(b.x, b.y);
-        if (b.thrown && wid && wid != b.lastWin && speed > 450.0f * S) { splat((int)i); anyDead = true; continue; }
-        b.lastWin = wid;
+        // the window the ball was let go over doesn't count until the ball has left it
+        if (b.lastWin) {
+            bool still = false;
+            for (const auto& w : wins)
+                if (w.id == b.lastWin) { still = b.x >= w.l && b.x < w.r && b.y >= w.t && b.y < w.b; break; }
+            if (!still) b.lastWin = 0;
+        }
+        float rr = b.r * 0.75f;
+        int wi = solidWindowAt(b.x, b.y, rr);
+        if (wi >= 0 && wins[wi].id != b.lastWin) {
+            const WinRect& w = wins[wi];
+            float px = b.x - b.vx * dt, py = b.y - b.vy * dt;   // where it came from
+            float nx = 0, ny = 0;
+            if (py < w.t - rr) ny = -1;
+            else if (py >= w.b + rr) ny = 1;
+            else if (px < w.l - rr) nx = -1;
+            else if (px >= w.r + rr) nx = 1;
+            else {                                              // pick the closest face
+                float dl = b.x - (w.l - rr), dr = (w.r + rr) - b.x, dtop = b.y - (w.t - rr), db = (w.b + rr) - b.y;
+                float mn = std::min(std::min(dl, dr), std::min(dtop, db));
+                if (mn == dtop) ny = -1; else if (mn == db) ny = 1; else if (mn == dl) nx = -1; else nx = 1;
+            }
+            if (ny < 0) b.y = w.t - rr; else if (ny > 0) b.y = w.b + rr;
+            else if (nx < 0) b.x = w.l - rr; else b.x = w.r + rr;
+            float vn = b.vx * nx + b.vy * ny;
+            if (b.thrown && -vn > 450.0f * S) { splat((int)i, nx, ny); anyDead = true; continue; }
+            if (vn < 0) { b.vx -= 1.3f * vn * nx; b.vy -= 1.3f * vn * ny; }   // soft bounce
+            if (ny < 0) {                                       // sitting / rolling on top of the window
+                if (std::fabs(b.vy) < 120.0f * S) b.vy = 0;
+                b.vx *= std::exp(-1.6f * dt);
+                b.thrown = false;
+            }
+            continue;
+        }
 
         bool done = false;
         for (size_t j = 0; j < balls.size() && !done; j++) {
@@ -568,7 +630,7 @@ void World::mouseDown(float x, float y, double t) {
         }
     }
     if (balls.size() >= 40) return;
-    Ball b{x, y, 0, 0, 0, 0, BALL_HELD, -1, 0, false};
+    Ball b{x, y, 0, 0, 0, 0, BALL_HELD, -1, 0, false, 0};
     balls.push_back(b);
     held = (int)balls.size() - 1;
 }
@@ -598,6 +660,7 @@ void World::mouseUp(float x, float y, double t) {
     if (sp > maxSp) { vx *= maxSp / sp; vy *= maxSp / sp; }
     b.vx = vx; b.vy = vy; b.state = BALL_FLY; b.support = -1;
     b.thrown = sp > 350.0f * S;
+    b.noKick = 0.8f;
     b.lastWin = windowAt(b.x, b.y);
     held = -1;
 }
@@ -606,7 +669,7 @@ void World::cancelHold() {
     mouseIsDown = false;
     if (held >= 0) {
         Ball& b = balls[held];
-        b.state = BALL_FLY; b.vx = b.vy = 0; b.thrown = false; b.lastWin = windowAt(b.x, b.y);
+        b.state = BALL_FLY; b.vx = b.vy = 0; b.thrown = false; b.noKick = 0.8f; b.lastWin = windowAt(b.x, b.y);
         held = -1;
     }
 }

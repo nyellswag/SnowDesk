@@ -31,6 +31,7 @@ struct Ball {
     int state, support;
     uint64_t lastWin;
     bool thrown;     // released with a swing (can splat); gently released balls are placed
+    float noKick;    // seconds during which the cursor won't shove this ball (right after you let go of it)
 };
 
 class World {
@@ -106,7 +107,8 @@ private:
     int slideDown(const std::vector<float>& h, int c, bool edgesFall) const;
     bool landLoose(std::vector<float>& h, int c, float m, float cap, Pile* p);
     void stepBalls(float dt);
-    void splat(int i);
+    void splat(int i, float nx = 0.0f, float ny = -1.0f);
+    int solidWindowAt(float x, float y, float grow) const;
     void compactBalls();
     void restPosition(Ball& b);
     bool isTopOfStack(int i) const;

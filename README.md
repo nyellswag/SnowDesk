@@ -23,12 +23,12 @@ Snow is interactive all the time. You don't need a special mode, and your normal
 | Make a snowball | press and hold the left mouse button on a drift (on the ground or on a window) and move the mouse around |
 | Throw it | release the button mid-swing; the snowball breaks when it hits a window or the ground |
 | Place it | release the button gently; three balls stacked on each other become a snowman |
-| Push snow | just move the cursor: falling flakes flow around it, it ploughs through drifts and nudges snowballs |
+| Push snow | falling flakes flow around the cursor; a quick swipe ploughs through drifts and kicks snowballs |
 | Click through snow | a short click on a drift without moving the mouse goes to the window underneath, as usual |
 | Play Mode | **Ctrl+Alt+S**, or left-click the tray snowflake: the mouse plays only with snow, even in empty space. A small "Play Mode" label appears at the top. Leave with Esc, right-click or Ctrl+Alt+S |
 | Menu | right-click the tray snowflake |
 
-Thrown snow doesn't stay as a sharp pile: it rolls down and spreads into a low mound.
+Windows are solid: a snowball thrown at a window breaks against the side it hits and the snow bounces off and falls; a gently dropped ball can sit on a window's top edge. Thrown snow doesn't stay as a sharp pile: it rolls down and spreads into a low mound. The cursor only shoves snow when you flick it quickly, so slowly moving onto a drift or a snowball to grab it leaves it alone.
 
 The menu has pause, snowfall strength (light, normal, heavy, blizzard),
 **"Make snowballs without Play Mode"** and **"Cursor pushes snow"** (both on by default, either can be turned off),
