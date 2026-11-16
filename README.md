@@ -16,20 +16,25 @@ You can scoop up the snow, make snowballs, throw them and stack them into a snow
 
 ## Controls
 
+Snow is interactive all the time. You don't need a special mode, and your normal work isn't affected.
+
 | Action | How |
 |---|---|
-| Turn play mode on or off | **Ctrl+Alt+S**, or left-click the tray snowflake |
-| Make a snowball | in play mode, hold the left mouse button on the snow and move the mouse around |
+| Make a snowball | press and hold the left mouse button on a drift (on the ground or on a window) and move the mouse around |
 | Throw it | release the button mid-swing; the snowball breaks when it hits a window or the ground |
 | Place it | release the button gently; three balls stacked on each other become a snowman |
-| Leave play mode | right-click, Esc or Ctrl+Alt+S; play mode also turns itself off after 60 seconds without mouse movement |
+| Push snow | just move the cursor: falling flakes flow around it, it ploughs through drifts and nudges snowballs |
+| Click through snow | a short click on a drift without moving the mouse goes to the window underneath, as usual |
+| Play Mode | **Ctrl+Alt+S**, or left-click the tray snowflake: the mouse plays only with snow, even in empty space. A small "Play Mode" label appears at the top. Leave with Esc, right-click or Ctrl+Alt+S |
 | Menu | right-click the tray snowflake |
 
-The menu has pause, snowfall strength (light, normal, heavy, blizzard), "Add a snowdrift", "Clear all snow",
-start with Windows, open the program folder, **"Uninstall SnowDesk completely"** and exit.
-The menu is in Russian for now.
+Thrown snow doesn't stay as a sharp pile: it rolls down and spreads into a low mound.
 
-Outside play mode, clicks pass straight through the snow, so it never gets in the way of your work.
+The menu has pause, snowfall strength (light, normal, heavy, blizzard),
+**"Make snowballs without Play Mode"** and **"Cursor pushes snow"** (both on by default, either can be turned off),
+"Add a snowdrift", "Clear all snow", start with Windows, open the program folder,
+**"Uninstall SnowDesk completely"** and exit. The menu is in Russian for now.
+
 The snow hides itself while a fullscreen game or video is in front.
 
 ## Where the data is stored

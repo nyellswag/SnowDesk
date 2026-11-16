@@ -28,10 +28,12 @@ static const wchar_t* RUN_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\
 
 enum {
     IDM_PLAY = 100, IDM_PAUSE, IDM_INT0, IDM_INT1, IDM_INT2, IDM_INT3,
-    IDM_DRIFT, IDM_CLEAR, IDM_AUTOSTART, IDM_FOLDER, IDM_UNINSTALL, IDM_EXIT
+    IDM_DRIFT, IDM_CLEAR, IDM_AUTOSTART, IDM_FOLDER, IDM_UNINSTALL, IDM_EXIT,
+    IDM_INTERACTIVE, IDM_CURSOR
 };
 enum { HK_PLAY = 1, HK_ESC = 2 };
 #define WM_TRAY (WM_APP + 1)
+#define WM_REPLAY_CLICK (WM_APP + 2)
 static const float INTENSITY[4] = {0.4f, 1.0f, 2.0f, 4.0f};
 
 struct App {
@@ -47,6 +49,11 @@ struct App {
     uint32_t* bits = nullptr;
     World world;
     bool paused = false, play = false, hiddenFS = false, visible = false, hotkeyOk = false;
+    bool interactive = true;     // grab snow with the mouse any time, without play mode
+    bool cursorPhys = true;      // the mouse cursor pushes snow around
+    HHOOK mouseHook = nullptr;
+    bool grab = false, grabMoved = false, grabBall = false;
+    double grabT = 0; float grabX = 0, grabY = 0;
     int intensityIdx = 1;
     double lastEnum = 0, lastTop = 0, lastSave = 0, lastInput = 0, lastFrame = 0;
     LARGE_INTEGER freq{};
@@ -171,12 +178,10 @@ static void present() {
 // ---------------------------------------------------------------- play-mode hint
 
 static void buildHint() {
-    const wchar_t* txt =
-        L"Режим игры:  зажмите левую кнопку на снегу — лепите снежок   •   отпустите с размахом — бросок, "
-        L"плавно — положить (3 шара друг на друга = снеговик)   •   правая кнопка или Esc — выход";
+    const wchar_t* txt = L"Play Mode  \u00B7  Esc";
     HDC sdc = GetDC(nullptr);
     HDC dc = CreateCompatibleDC(sdc);
-    int px = (int)(15 * g.scale);
+    int px = (int)(12 * g.scale);
     HFONT f = CreateFontW(-px, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe UI");
     HFONT of = (HFONT)SelectObject(dc, f);
     RECT rc{0, 0, g.W - (int)(80 * g.scale), 0};
@@ -226,10 +231,10 @@ static inline void over(uint32_t& d, uint32_t s) {
 
 static void drawHint() {
     if (g.hint.empty()) return;
-    int padX = (int)(16 * g.scale), padY = (int)(9 * g.scale), rad = (int)(10 * g.scale);
+    int padX = (int)(10 * g.scale), padY = (int)(4 * g.scale), rad = (int)(8 * g.scale);
     int bw = g.hintW + padX * 2, bh = g.hintH + padY * 2;
-    int x0 = (g.W - bw) / 2, y0 = (int)(24 * g.scale);
-    const uint32_t a = 200;
+    int x0 = (g.W - bw) / 2, y0 = (int)(10 * g.scale);
+    const uint32_t a = 150;
     uint32_t box = (a << 24) | ((20 * a / 255) << 16) | ((28 * a / 255) << 8) | (44 * a / 255);
     for (int y = 0; y < bh; y++) {
         int yy = y0 + y;
@@ -257,7 +262,7 @@ static void drawHint() {
 // ---------------------------------------------------------------- windows
 
 static bool isShellClass(const wchar_t* cls) {
-    return !wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW") ||
+    return !wcscmp(cls, L"Progman") || !wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"#32769") ||
            !wcscmp(cls, L"Shell_TrayWnd") || !wcscmp(cls, L"Shell_SecondaryTrayWnd");
 }
 
@@ -293,7 +298,7 @@ static BOOL CALLBACK enumProc(HWND h, LPARAM lp) {
 
 static bool foregroundIsFullscreen() {
     HWND fg = GetForegroundWindow();
-    if (!fg || fg == g.overlay || fg == g.ctl || IsZoomed(fg)) return false;
+    if (!fg || fg == g.overlay || fg == g.ctl || fg == GetDesktopWindow() || IsZoomed(fg)) return false;
     wchar_t cls[96] = {0};
     GetClassNameW(fg, cls, 96);
     if (isShellClass(cls)) return false;
@@ -313,6 +318,7 @@ static void showOverlay(bool show) {
 static void setPlay(bool on) {
     if (on == g.play) return;
     if (on && g.paused) return;
+    if (g.grab) { g.grab = false; g.world.cancelHold(); }
     g.play = on;
     LONG ex = GetWindowLongW(g.overlay, GWL_EXSTYLE);
     if (on) ex &= ~WS_EX_TRANSPARENT; else ex |= WS_EX_TRANSPARENT;
@@ -334,6 +340,7 @@ static void setPaused(bool p) {
     if (p == g.paused) return;
     if (p) {
         setPlay(false);
+        if (g.grab) { g.grab = false; g.world.cancelHold(); }
         g.paused = true;
         KillTimer(g.ctl, 1);
         showOverlay(false);
@@ -387,11 +394,15 @@ static void frame() {
     }
     if (g.hiddenFS) { showOverlay(false); return; }
 
+    {
+        POINT cp;
+        bool ok = GetCursorPos(&cp) && cp.x >= g.mon.left && cp.x < g.mon.right && cp.y >= g.mon.top && cp.y < g.mon.bottom;
+        g.world.setCursor((float)(cp.x - g.mon.left), (float)(cp.y - g.mon.top), t, ok);
+    }
     g.world.step(dt);
     if (g.play) {
-        const uint32_t a = 26;
-        uint32_t tint = (a << 24) | ((150 * a / 255) << 16) | ((175 * a / 255) << 8) | (215 * a / 255);
-        std::fill(g.bits, g.bits + (size_t)g.W * g.H, tint);
+        // alpha 1/255: invisible, but makes the whole overlay catch the mouse in play mode
+        std::fill(g.bits, g.bits + (size_t)g.W * g.H, 0x01000000u);
     } else {
         memset(g.bits, 0, (size_t)g.W * g.H * 4);
     }
@@ -406,6 +417,56 @@ static void frame() {
     }
     if (t - g.lastSave > 60) saveSnow();
     if (g.play && t - g.lastInput > 60) setPlay(false);  // safety: never leave the mouse captured
+}
+
+// ---------------------------------------------------------------- grab snow without play mode
+// A low-level mouse hook watches clicks. A press on snow (a snowball or a drift at least a few px deep) is kept
+// for the snow; everything else goes to Windows untouched. A short click on a drift that doesn't move is
+// replayed to the window underneath, so normal clicking keeps working.
+
+static bool hookActive() {
+    return g.interactive && !g.play && !g.paused && !g.hiddenFS && g.visible;
+}
+
+static LRESULT CALLBACK mouseHookProc(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION) {
+        auto* m = (MSLLHOOKSTRUCT*)lp;
+        if (!(m->flags & LLMHF_INJECTED)) {
+            float x = (float)(m->pt.x - g.mon.left), y = (float)(m->pt.y - g.mon.top);
+            if (wp == WM_LBUTTONDOWN && hookActive() && !g.grab &&
+                m->pt.x >= g.mon.left && m->pt.x < g.mon.right && m->pt.y >= g.mon.top && m->pt.y < g.mon.bottom) {
+                int hit = g.world.hitTest(x, y);
+                if (hit) {
+                    g.grab = true; g.grabMoved = false; g.grabBall = (hit == 1);
+                    g.grabT = now(); g.grabX = x; g.grabY = y;
+                    g.world.mouseDown(x, y, g.grabT);
+                    return 1;
+                }
+            } else if (wp == WM_MOUSEMOVE && g.grab) {
+                g.world.mouseMove(x, y, now());
+                float dx = x - g.grabX, dy = y - g.grabY;
+                if (dx * dx + dy * dy > 25.0f * g.scale * g.scale) g.grabMoved = true;
+            } else if (wp == WM_LBUTTONUP && g.grab) {
+                g.grab = false;
+                double t = now();
+                bool quick = !g.grabMoved && (t - g.grabT) < 0.25;
+                g.world.mouseUp(x, y, t);
+                if (quick && !g.grabBall) PostMessageW(g.ctl, WM_REPLAY_CLICK, 0, 0);
+                return 1;
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
+static void updateHook() {
+    if (g.interactive && !g.mouseHook)
+        g.mouseHook = SetWindowsHookExW(WH_MOUSE_LL, mouseHookProc, g.inst, 0);
+    else if (!g.interactive && g.mouseHook) {
+        UnhookWindowsHookEx(g.mouseHook);
+        g.mouseHook = nullptr;
+        if (g.grab) { g.grab = false; g.world.cancelHold(); }
+    }
 }
 
 // ---------------------------------------------------------------- tray
@@ -446,6 +507,9 @@ static void showMenu() {
     AppendMenuW(m, MF_STRING, IDM_DRIFT, L"Насыпать сугроб");
     AppendMenuW(m, MF_STRING, IDM_CLEAR, L"Убрать весь снег");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (g.interactive ? MF_CHECKED : 0), IDM_INTERACTIVE, L"Лепить снежки без режима игры");
+    AppendMenuW(m, MF_STRING | (g.cursorPhys ? MF_CHECKED : 0), IDM_CURSOR, L"Курсор толкает снег");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (autostartOn() ? MF_CHECKED : 0), IDM_AUTOSTART, L"Запускать вместе с Windows");
     AppendMenuW(m, MF_STRING, IDM_FOLDER, L"Открыть папку программы");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
@@ -462,6 +526,7 @@ static void shutdown(bool save) {
     KillTimer(g.ctl, 1);
     if (save) saveSnow();
     Shell_NotifyIconW(NIM_DELETE, &g.nid);
+    if (g.mouseHook) { UnhookWindowsHookEx(g.mouseHook); g.mouseHook = nullptr; }
     UnregisterHotKey(g.ctl, HK_PLAY);
     UnregisterHotKey(g.ctl, HK_ESC);
     DestroyWindow(g.overlay);
@@ -538,6 +603,15 @@ static LRESULT CALLBACK ctlProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (wp == 1) frame();
         return 0;
+    case WM_REPLAY_CLICK: {
+        // a quick click on snow wasn't meant for the snow: hand it to the window underneath
+        INPUT in[2] = {};
+        in[0].type = in[1].type = INPUT_MOUSE;
+        in[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+        in[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+        SendInput(2, in, sizeof(INPUT));
+        return 0;
+    }
     case WM_HOTKEY:
         if (wp == HK_PLAY) { if (g.paused) setPaused(false); setPlay(!g.play); }
         else if (wp == HK_ESC) setPlay(false);
@@ -558,6 +632,16 @@ static LRESULT CALLBACK ctlProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case IDM_DRIFT: g.world.addDrift(); break;
         case IDM_CLEAR: g.world.clearSnow(); saveSnow(); break;
         case IDM_AUTOSTART: setAutostart(!autostartOn()); break;
+        case IDM_INTERACTIVE:
+            g.interactive = !g.interactive;
+            iniSet(L"Interactive", g.interactive ? 1 : 0);
+            updateHook();
+            break;
+        case IDM_CURSOR:
+            g.cursorPhys = !g.cursorPhys;
+            g.world.setCursorPhysics(g.cursorPhys);
+            iniSet(L"CursorPhysics", g.cursorPhys ? 1 : 0);
+            break;
         case IDM_FOLDER: ShellExecuteW(nullptr, L"open", g.dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
         case IDM_UNINSTALL: uninstall(); break;
         case IDM_EXIT: shutdown(true); break;
@@ -708,6 +792,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     }
 
     g.intensityIdx = std::max(0, std::min(3, iniInt(L"Intensity", 1)));
+    g.interactive = iniInt(L"Interactive", 1) != 0;
+    g.cursorPhys = iniInt(L"CursorPhysics", 1) != 0;
+    g.world.setCursorPhysics(g.cursorPhys);
     g.world.setIntensity(INTENSITY[g.intensityIdx]);
     g.world.init(g.W, g.H, g.groundY, g.scale);
     std::vector<uint8_t> data;
@@ -715,6 +802,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
 
     g.wmTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     addTray();
+    updateHook();
     g.hotkeyOk = RegisterHotKey(g.ctl, HK_PLAY, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'S') != 0;
 
     if (!iniInt(L"Welcomed", 0)) {

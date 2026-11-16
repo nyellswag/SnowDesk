@@ -46,6 +46,12 @@ public:
     void mouseUp(float x, float y, double t);
     void cancelHold();
 
+    // mouse cursor as a physical obstacle (call every frame); valid=false when the cursor is off this screen
+    void setCursor(float x, float y, double t, bool valid);
+    void setCursorPhysics(bool on) { cursorPhysics = on; }
+    // what is under a point: 0 = nothing, 1 = a snowball, 2 = a pile of snow
+    int hitTest(float x, float y) const;
+
     void clearSnow();
     void addDrift();
     void setIntensity(float k) { intensity = k; }
@@ -80,6 +86,9 @@ private:
     struct Sample { float x, y; double t; };
     std::vector<Sample> hist;
     int relaxDir = 0;
+    bool cursorPhysics = true, cursorValid = false;
+    float curX = 0, curY = 0, curVx = 0, curVy = 0;
+    double curT = 0;
 
     float rnd();                       // [0,1)
     float rndr(float a, float b) { return a + (b - a) * rnd(); }
@@ -93,6 +102,9 @@ private:
     float groundCap() const;
     uint64_t windowAt(float x, float y) const;
     void collect(Ball& b, float dt);
+    void cursorStep(float dt);
+    int slideDown(const std::vector<float>& h, int c, bool edgesFall) const;
+    bool landLoose(std::vector<float>& h, int c, float m, float cap, Pile* p);
     void stepBalls(float dt);
     void splat(int i);
     void compactBalls();

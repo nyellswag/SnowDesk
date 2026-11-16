@@ -170,6 +170,41 @@ void World::relax(std::vector<float>& h, float slope, Pile* p) {
     }
 }
 
+// Loose snow (thrown / falling chunks) rolls downhill until the slope is gentle: heaps spread into low mounds.
+int World::slideDown(const std::vector<float>& h, int c, bool edgesFall) const {
+    const float loose = 0.3f;             // px of drop per column that still makes loose snow roll (~17 degrees)
+    int n = (int)h.size();
+    for (int step = 0; step < 120; step++) {
+        float hc = h[c];
+        float dl = c > 0 ? hc - h[c - 1] : (edgesFall ? 1e9f : 0.0f);
+        float dr = c < n - 1 ? hc - h[c + 1] : (edgesFall ? 1e9f : 0.0f);
+        if (dl <= loose && dr <= loose) break;
+        int dir = (dl > dr) ? -1 : (dr > dl ? 1 : ((step & 1) ? 1 : -1));
+        c += dir;
+        if (c < 0) return -1;             // rolled off the left edge
+        if (c >= n) return -2;            // rolled off the right edge
+    }
+    return c;
+}
+
+bool World::landLoose(std::vector<float>& h, int c, float m, float cap, Pile* p) {
+    // settle in thin layers so each bit can roll down on its own (no stair-step heaps)
+    float spill = 0; int spillDir = 0;
+    while (m > 0.001f) {
+        float piece = std::min(m, 0.25f);
+        m -= piece;
+        int at = slideDown(h, c, p != nullptr);
+        if (at < 0) { spill += piece; spillDir = at; continue; }
+        if (h[at] < cap) h[at] = std::min(cap, h[at] + piece);
+        c = at;
+    }
+    if (spill > 0 && p) {
+        if (spillDir == -1) spawnChunk(p->l - 1.5f, p->t - 1.0f, -30.0f * S, 0, spill);
+        else spawnChunk(p->l + p->w + 0.5f, p->t - 1.0f, 30.0f * S, 0, spill);
+    }
+    return true;
+}
+
 bool World::tryLand(Particle& p, float y0) {
     int cx = (int)std::floor(p.x);
     if (cx < 0 || cx >= W) return false;
@@ -180,13 +215,123 @@ bool World::tryLand(Particle& p, float y0) {
         if (!P.vis[c]) continue;
         float surf = P.t - P.h[c];
         if (y0 <= surf && p.y >= surf) {
+            if (p.kind == 1) return landLoose(P.h, c, p.mass, pileCap(), &P);
             deposit(P.h, c, p.mass, pileCap());
             return true;
         }
     }
     float gs = groundY - ground[cx];
-    if (p.y >= gs) { deposit(ground, cx, p.mass, groundCap()); return true; }
+    if (p.y >= gs) {
+        if (p.kind == 1) return landLoose(ground, cx, p.mass, groundCap(), nullptr);
+        deposit(ground, cx, p.mass, groundCap());
+        return true;
+    }
     return false;
+}
+
+// ---------------------------------------------------------------- cursor
+
+void World::setCursor(float x, float y, double t, bool valid) {
+    if (valid && cursorValid && t > curT) {
+        float dt = (float)(t - curT);
+        if (dt > 0.001f) {
+            float k = std::min(1.0f, dt / 0.05f);   // smoothed velocity
+            curVx += ((x - curX) / dt - curVx) * k;
+            curVy += ((y - curY) / dt - curVy) * k;
+        }
+    } else {
+        curVx = curVy = 0;
+    }
+    curX = x; curY = y; curT = t; cursorValid = valid;
+}
+
+int World::hitTest(float x, float y) const {
+    for (int i = (int)balls.size() - 1; i >= 0; i--) {
+        const Ball& b = balls[i];
+        if (b.state == BALL_DEAD || b.r < 3) continue;
+        float dx = x - b.x, dy = y - b.y;
+        if (dx * dx + dy * dy < (b.r + 4 * S) * (b.r + 4 * S)) return 1;
+    }
+    int cx = (int)std::floor(x);
+    if (cx < 0 || cx >= W) return 0;
+    float minH = 3.0f * S, pad = 2.0f * S;
+    for (const Pile* P : pileOrder) {
+        if (cx < P->l || cx >= P->l + P->w) continue;
+        int c = cx - P->l;
+        if (!P->vis[c] || P->h[c] < minH) continue;
+        if (y >= P->t - P->h[c] - pad && y <= P->t) return 2;
+    }
+    if (ground[cx] >= minH && y >= groundY - ground[cx] - pad && y <= groundY) return 2;
+    return 0;
+}
+
+// The arrow cursor is modelled as a small circle around its body (hotspot is the arrow tip).
+void World::cursorStep(float dt) {
+    if (!cursorPhysics || !cursorValid || held >= 0) return;
+    const float R = 10.0f * S;
+    const float ox = curX + 4.0f * S, oy = curY + 8.0f * S;
+    float speed = std::sqrt(curVx * curVx + curVy * curVy);
+
+    // falling snow flows around the cursor; chunks bounce off it
+    for (auto& p : parts) {
+        float dx = p.x - ox, dy = p.y - oy;
+        float d2 = dx * dx + dy * dy;
+        if (d2 >= R * R) continue;
+        float d = std::sqrt(d2);
+        float nx = d > 1e-3f ? dx / d : 0.0f, ny = d > 1e-3f ? dy / d : -1.0f;
+        p.x = ox + nx * R; p.y = oy + ny * R;
+        if (p.kind == 1) {
+            float vn = (p.vx - curVx) * nx + (p.vy - curVy) * ny;
+            if (vn < 0) { p.vx -= 1.5f * vn * nx; p.vy -= 1.5f * vn * ny; }
+        } else {
+            p.x += (nx >= 0 ? 1.0f : -1.0f) * 25.0f * S * dt;   // slide off the top
+        }
+    }
+
+    // moving through a drift ploughs the snow out of the way
+    if (speed > 40.0f * S) {
+        int x0 = std::max(0, (int)(ox - R)), x1 = std::min(W - 1, (int)(ox + R));
+        float carried = 0, cxSum = 0;
+        auto plough = [&](std::vector<float>& h, int c, int col, float base) {
+            float dx = col + 0.5f - ox;
+            float dy = std::sqrt(std::max(0.0f, R * R - dx * dx));
+            float surf = base - h[c];
+            float lo = std::max(surf, oy - dy), hi = std::min(base, oy + dy);
+            float ov = hi - lo;
+            if (ov <= 0) return;
+            float take = std::min(ov, h[c]);
+            h[c] -= take; carried += take; cxSum += take * col;
+        };
+        for (int col = x0; col <= x1; col++) {
+            plough(ground, col, col, (float)groundY);
+            for (Pile* P : pileOrder)
+                if (col >= P->l && col < P->l + P->w && P->vis[col - P->l]) plough(P->h, col - P->l, col, (float)P->t);
+        }
+        if (carried > 0.5f) {
+            float mx_ = cxSum / carried;
+            int n = std::min(40, std::max(1, (int)(carried / 3.0f)));
+            float m = carried / n;
+            float vx = clampf(curVx, -900.0f * S, 900.0f * S), vy = clampf(curVy, -900.0f * S, 900.0f * S);
+            for (int k = 0; k < n; k++)
+                spawnChunk(mx_ + rndr(-R, R) * 0.6f, oy - R - rndr(0, 4) * S,
+                           vx * rndr(0.3f, 0.7f) + rndr(-60, 60) * S, std::min(vy * 0.4f, 0.0f) - rndr(80, 220) * S, m);
+        }
+    }
+
+    // nudge snowballs
+    for (auto& b : balls) {
+        if (b.state == BALL_DEAD || b.state == BALL_HELD) continue;
+        float dx = b.x - ox, dy = b.y - oy;
+        float d = std::sqrt(dx * dx + dy * dy), minD = b.r + R * 0.7f;
+        if (d >= minD || d < 1e-3f) continue;
+        float nx = dx / d;
+        if (b.state == BALL_REST && speed < 30.0f * S) continue;   // resting cursor doesn't shove
+        b.x = ox + nx * minD;
+        if (b.state == BALL_REST) { b.state = BALL_FLY; b.support = -1; b.vy = -40.0f * S; }
+        b.thrown = false;
+        b.vx = b.vx * 0.3f + curVx * 0.7f;
+        b.vy = std::min(b.vy, curVy * 0.5f);
+    }
 }
 
 // ---------------------------------------------------------------- step
@@ -227,6 +372,8 @@ void World::step(float dt) {
         if (gone) { parts[i] = parts.back(); parts.pop_back(); }
         else i++;
     }
+
+    cursorStep(dt);
 
     relaxDir++;
     relax(ground, 1.3f, nullptr);
@@ -286,12 +433,12 @@ void World::splat(int i) {
     Ball& b = balls[i];
     if (b.state == BALL_DEAD) return;
     int n = clampi((int)(b.vol / 5.0f), 8, 300);
-    float m = b.vol / n;
+    float m = b.vol * 0.65f / n;      // ~35% turns into powder and vanishes
     for (int k = 0; k < n; k++) {
         float a = rndr(0, 2 * PI), rr = b.r * std::sqrt(rnd());
-        float sp = rndr(40, 260) * S;
+        float sp = rndr(60, 320) * S;
         spawnChunk(b.x + std::cos(a) * rr, b.y + std::sin(a) * rr,
-                   std::cos(a) * sp + b.vx * 0.15f, std::sin(a) * sp + b.vy * 0.1f - 120.0f * S, m);
+                   std::cos(a) * sp * 1.4f + b.vx * 0.25f, -std::fabs(std::sin(a)) * sp * 0.8f - 60.0f * S, m);
     }
     b.state = BALL_DEAD;
     if (held == i) held = -1;
@@ -386,8 +533,17 @@ void World::stepBalls(float dt) {
         int gx = clampi((int)b.x, 0, W - 1);
         float gs = groundY - ground[gx];
         if (b.y + b.r * 0.75f >= gs) {
-            if (b.thrown && speed > splatSpeed) { splat((int)i); anyDead = true; }
-            else { b.state = BALL_REST; b.support = -1; b.vx = b.vy = 0; b.y = gs - b.r * 0.75f; }
+            if (b.thrown && speed > splatSpeed) { splat((int)i); anyDead = true; continue; }
+            b.y = gs - b.r * 0.75f;
+            b.vy = 0;
+            if (std::fabs(b.vx) > 35.0f * S) {          // roll along the snow and slow down
+                b.vx *= std::exp(-1.6f * dt);
+                float take = std::min(ground[gx], std::fabs(b.vx) * dt * 0.03f);
+                ground[gx] -= take; b.vol += take;      // a rolling snowball grows a little
+                b.thrown = false;
+            } else {
+                b.state = BALL_REST; b.support = -1; b.vx = 0;
+            }
             continue;
         }
         if (b.y > H + b.r) { b.state = BALL_DEAD; anyDead = true; }
