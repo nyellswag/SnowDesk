@@ -28,12 +28,13 @@ Snow is interactive all the time. You don't need a special mode, and your normal
 | Play Mode | **Ctrl+Alt+S**, or left-click the tray snowflake: the mouse plays only with snow, even in empty space. A small "Play Mode" label appears at the top. Leave with Esc, right-click or Ctrl+Alt+S |
 | Menu | right-click the tray snowflake |
 
-Windows are solid: a snowball thrown at a window breaks against the side it hits and the snow bounces off and falls; a gently dropped ball can sit on a window's top edge. Thrown snow doesn't stay as a sharp pile: it rolls down and spreads into a low mound. The cursor only shoves snow when you flick it quickly, so slowly moving onto a drift or a snowball to grab it leaves it alone.
+Windows are solid: a snowball thrown at a window breaks against the side it hits and the snow bounces off and falls; a gently dropped ball can sit on a window's top edge, and you can build a snowman there too. The snowman rides along when you drag the window gently, and falls off if you yank the window hard, minimize it or close it. Thrown snow doesn't stay as a sharp pile: it rolls down and spreads into a low mound. The cursor only shoves snow when you flick it quickly, so slowly moving onto a drift or a snowball to grab it leaves it alone.
 
-The menu has pause, snowfall strength (light, normal, heavy, blizzard),
-**"Make snowballs without Play Mode"** and **"Cursor pushes snow"** (both on by default, either can be turned off),
-"Add a snowdrift", "Clear all snow", start with Windows, open the program folder,
-**"Uninstall SnowDesk completely"** and exit. The menu is in Russian for now.
+The menu has Play Mode, pause, snowfall strength (light, normal, heavy, blizzard),
+"Add a snowdrift", "Clear all snow", **"Make snowballs without Play Mode"** and **"Cursor pushes snow"**
+(both on by default, either can be turned off), start with Windows, open the program folder,
+**Language** (English or Russian), **"Uninstall SnowDesk completely"** and exit.
+The interface is in English by default; switch it to Russian in the tray menu under **Language / Язык**.
 
 The snow hides itself while a fullscreen game or video is in front.
 

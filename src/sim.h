@@ -32,6 +32,8 @@ struct Ball {
     uint64_t lastWin;
     bool thrown;     // released with a swing (can splat); gently released balls are placed
     float noKick;    // seconds during which the cursor won't shove this ball (right after you let go of it)
+    uint64_t onWin = 0;          // resting on top of this window (0 = on the ground or on another ball)
+    int winL = 0, winT = 0;      // where that window was when the ball settled
 };
 
 class World {
@@ -109,6 +111,8 @@ private:
     void stepBalls(float dt);
     void splat(int i, float nx = 0.0f, float ny = -1.0f);
     int solidWindowAt(float x, float y, float grow) const;
+    float pileHeightAt(uint64_t win, float x) const;
+    bool restsOnWindow(int i) const;
     void compactBalls();
     void restPosition(Ball& b);
     bool isTopOfStack(int i) const;

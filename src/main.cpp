@@ -29,12 +29,76 @@ static const wchar_t* RUN_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\
 enum {
     IDM_PLAY = 100, IDM_PAUSE, IDM_INT0, IDM_INT1, IDM_INT2, IDM_INT3,
     IDM_DRIFT, IDM_CLEAR, IDM_AUTOSTART, IDM_FOLDER, IDM_UNINSTALL, IDM_EXIT,
-    IDM_INTERACTIVE, IDM_CURSOR
+    IDM_INTERACTIVE, IDM_CURSOR, IDM_LANG_EN, IDM_LANG_RU
 };
 enum { HK_PLAY = 1, HK_ESC = 2 };
 #define WM_TRAY (WM_APP + 1)
 #define WM_REPLAY_CLICK (WM_APP + 2)
 static const float INTENSITY[4] = {0.4f, 1.0f, 2.0f, 4.0f};
+
+// ---------------------------------------------------------------- languages
+// English is the default; Russian can be picked in the tray menu (Language / Язык).
+
+enum Str {
+    S_TIP, S_PLAY, S_PLAY_HK, S_PAUSE, S_INT_MENU, S_INT0, S_INT1, S_INT2, S_INT3,
+    S_DRIFT, S_CLEAR, S_INTERACTIVE, S_CURSOR, S_AUTOSTART, S_FOLDER, S_LANGUAGE,
+    S_UNINSTALL, S_EXIT, S_UNINSTALL_Q, S_MOVE_Q, S_MOVE_FAIL, S_RUNNING, S_NOMEM, S_NOWINDOW,
+    S_WELCOME_TITLE, S_WELCOME_HK, S_WELCOME, S_PLAY_LABEL, S_COUNT
+};
+
+static const wchar_t* const STR_EN[S_COUNT] = {
+    L"SnowDesk \u2014 snow on your desktop\nLeft-click: Play Mode  \u2022  right-click: menu",
+    L"Play Mode", L"Play Mode\tCtrl+Alt+S", L"Pause (hide the snow)",
+    L"Snowfall", L"Light", L"Normal", L"Heavy", L"Blizzard",
+    L"Add a snowdrift", L"Clear all snow",
+    L"Make snowballs without Play Mode", L"Cursor pushes snow",
+    L"Start with Windows", L"Open program folder", L"Language",
+    L"Uninstall SnowDesk completely\u2026", L"Exit",
+    L"Uninstall SnowDesk completely?\n\n"
+    L"This removes the program itself, its settings, the saved snow and the autostart entry.\n"
+    L"No other files on your computer are touched.",
+    L"SnowDesk is on drive C: right now.\n\n"
+    L"Move the program and all its data to D:\\SnowDesk?\n"
+    L"(recommended \u2014 nothing will be left on drive C:)",
+    L"Couldn't copy the program to drive D:. SnowDesk will run from where it is.",
+    L"SnowDesk is already running.\n\nIts snowflake icon is at the bottom right, next to the clock "
+    L"(it may be hidden under the ^ arrow).",
+    L"Not enough memory to start SnowDesk.",
+    L"Couldn't create the SnowDesk window.",
+    L"SnowDesk is running \u2744",
+    L"Hold the mouse on snow to make a snowball. Ctrl+Alt+S or left-click the snowflake by the clock: Play Mode. "
+    L"Right-click: menu.",
+    L"Hold the mouse on snow to make a snowball. Left-click the snowflake by the clock: Play Mode. Right-click: menu.",
+    L"Play Mode  \u00B7  Esc",
+};
+
+static const wchar_t* const STR_RU[S_COUNT] = {
+    L"SnowDesk \u2014 снег на рабочем столе\nЛевый клик: режим игры  \u2022  правый: меню",
+    L"Режим игры", L"Режим игры\tCtrl+Alt+S", L"Пауза (снег спрятан)",
+    L"Сила снегопада", L"Лёгкий", L"Обычный", L"Сильный", L"Метель",
+    L"Насыпать сугроб", L"Убрать весь снег",
+    L"Лепить снежки без режима игры", L"Курсор толкает снег",
+    L"Запускать вместе с Windows", L"Открыть папку программы", L"Язык",
+    L"Удалить SnowDesk полностью\u2026", L"Выход",
+    L"Удалить SnowDesk полностью?\n\n"
+    L"Будут удалены: сама программа, настройки, сохранённый снег и автозапуск.\n"
+    L"Другие файлы на компьютере не затрагиваются.",
+    L"SnowDesk сейчас лежит на диске C:.\n\n"
+    L"Перенести программу и все её данные в папку D:\\SnowDesk?\n"
+    L"(рекомендуется \u2014 на диске C: ничего не останется)",
+    L"Не получилось скопировать программу на диск D:. SnowDesk запустится с текущего места.",
+    L"SnowDesk уже запущен.\n\nЕго значок-снежинка \u2014 справа внизу, у часов (может быть спрятан под стрелкой ^).",
+    L"Не хватило памяти для запуска SnowDesk.",
+    L"Не удалось создать окно SnowDesk.",
+    L"SnowDesk запущен \u2744",
+    L"Зажмите мышь на снегу, чтобы слепить снежок. Ctrl+Alt+S или левый клик по снежинке у часов \u2014 режим игры. "
+    L"Правый клик \u2014 меню.",
+    L"Зажмите мышь на снегу, чтобы слепить снежок. Левый клик по снежинке у часов \u2014 режим игры. Правый клик \u2014 меню.",
+    L"Режим игры  \u00B7  Esc",
+};
+
+static bool g_ru = false;
+static const wchar_t* T(Str s) { return (g_ru ? STR_RU : STR_EN)[s]; }
 
 struct App {
     HINSTANCE inst = nullptr;
@@ -178,7 +242,7 @@ static void present() {
 // ---------------------------------------------------------------- play-mode hint
 
 static void buildHint() {
-    const wchar_t* txt = L"Play Mode  \u00B7  Esc";
+    const wchar_t* txt = T(S_PLAY_LABEL);
     HDC sdc = GetDC(nullptr);
     HDC dc = CreateCompatibleDC(sdc);
     int px = (int)(12 * g.scale);
@@ -479,7 +543,7 @@ static void addTray() {
     g.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g.nid.uCallbackMessage = WM_TRAY;
     g.nid.hIcon = g.icon;
-    wcsncpy(g.nid.szTip, L"SnowDesk — снег на рабочем столе\nЛевый клик: играть  •  правый: меню", 127);
+    wcsncpy(g.nid.szTip, T(S_TIP), 127);
     Shell_NotifyIconW(NIM_ADD, &g.nid);
 }
 
@@ -495,26 +559,31 @@ static void balloon(const wchar_t* title, const wchar_t* text) {
 static void showMenu() {
     HMENU m = CreatePopupMenu();
     HMENU sub = CreatePopupMenu();
+    HMENU lang = CreatePopupMenu();
     AppendMenuW(m, MF_STRING | (g.play ? MF_CHECKED : 0) | (g.paused ? MF_GRAYED : 0), IDM_PLAY,
-                g.hotkeyOk ? L"Играть со снегом\tCtrl+Alt+S" : L"Играть со снегом");
-    AppendMenuW(m, MF_STRING | (g.paused ? MF_CHECKED : 0), IDM_PAUSE, L"Пауза (снег спрятан)");
-    AppendMenuW(sub, MF_STRING, IDM_INT0, L"Лёгкий");
-    AppendMenuW(sub, MF_STRING, IDM_INT1, L"Обычный");
-    AppendMenuW(sub, MF_STRING, IDM_INT2, L"Сильный");
-    AppendMenuW(sub, MF_STRING, IDM_INT3, L"Метель");
+                g.hotkeyOk ? T(S_PLAY_HK) : T(S_PLAY));
+    AppendMenuW(m, MF_STRING | (g.paused ? MF_CHECKED : 0), IDM_PAUSE, T(S_PAUSE));
+    AppendMenuW(sub, MF_STRING, IDM_INT0, T(S_INT0));
+    AppendMenuW(sub, MF_STRING, IDM_INT1, T(S_INT1));
+    AppendMenuW(sub, MF_STRING, IDM_INT2, T(S_INT2));
+    AppendMenuW(sub, MF_STRING, IDM_INT3, T(S_INT3));
     CheckMenuRadioItem(sub, IDM_INT0, IDM_INT3, IDM_INT0 + g.intensityIdx, MF_BYCOMMAND);
-    AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, L"Сила снегопада");
-    AppendMenuW(m, MF_STRING, IDM_DRIFT, L"Насыпать сугроб");
-    AppendMenuW(m, MF_STRING, IDM_CLEAR, L"Убрать весь снег");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)sub, T(S_INT_MENU));
+    AppendMenuW(m, MF_STRING, IDM_DRIFT, T(S_DRIFT));
+    AppendMenuW(m, MF_STRING, IDM_CLEAR, T(S_CLEAR));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING | (g.interactive ? MF_CHECKED : 0), IDM_INTERACTIVE, L"Лепить снежки без режима игры");
-    AppendMenuW(m, MF_STRING | (g.cursorPhys ? MF_CHECKED : 0), IDM_CURSOR, L"Курсор толкает снег");
+    AppendMenuW(m, MF_STRING | (g.interactive ? MF_CHECKED : 0), IDM_INTERACTIVE, T(S_INTERACTIVE));
+    AppendMenuW(m, MF_STRING | (g.cursorPhys ? MF_CHECKED : 0), IDM_CURSOR, T(S_CURSOR));
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING | (autostartOn() ? MF_CHECKED : 0), IDM_AUTOSTART, L"Запускать вместе с Windows");
-    AppendMenuW(m, MF_STRING, IDM_FOLDER, L"Открыть папку программы");
+    AppendMenuW(m, MF_STRING | (autostartOn() ? MF_CHECKED : 0), IDM_AUTOSTART, T(S_AUTOSTART));
+    AppendMenuW(m, MF_STRING, IDM_FOLDER, T(S_FOLDER));
+    AppendMenuW(lang, MF_STRING, IDM_LANG_EN, L"English");
+    AppendMenuW(lang, MF_STRING, IDM_LANG_RU, L"Русский");
+    CheckMenuRadioItem(lang, IDM_LANG_EN, IDM_LANG_RU, g_ru ? IDM_LANG_RU : IDM_LANG_EN, MF_BYCOMMAND);
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)lang, g_ru ? L"Язык / Language" : L"Language / Язык");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, IDM_UNINSTALL, L"Удалить SnowDesk полностью…");
-    AppendMenuW(m, MF_STRING, IDM_EXIT, L"Выход");
+    AppendMenuW(m, MF_STRING, IDM_UNINSTALL, T(S_UNINSTALL));
+    AppendMenuW(m, MF_STRING, IDM_EXIT, T(S_EXIT));
     POINT pt; GetCursorPos(&pt);
     SetForegroundWindow(g.ctl);
     TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, g.ctl, nullptr);
@@ -547,10 +616,7 @@ static bool endsWithSnowDesk(const std::wstring& d) {
 static void uninstall() {
     bool wasPaused = g.paused;
     setPaused(true);
-    int r = MessageBoxW(nullptr,
-        L"Удалить SnowDesk полностью?\n\n"
-        L"Будут удалены: сама программа, настройки, сохранённый снег и автозапуск.\n"
-        L"Другие файлы на компьютере не затрагиваются.",
+    int r = MessageBoxW(nullptr, T(S_UNINSTALL_Q),
         L"SnowDesk", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_TOPMOST);
     if (r != IDYES) { if (!wasPaused) setPaused(false); return; }
 
@@ -637,6 +703,15 @@ static LRESULT CALLBACK ctlProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             iniSet(L"Interactive", g.interactive ? 1 : 0);
             updateHook();
             break;
+        case IDM_LANG_EN: case IDM_LANG_RU:
+            g_ru = LOWORD(wp) == IDM_LANG_RU;
+            WritePrivateProfileStringW(L"Settings", L"Language", g_ru ? L"ru" : L"en", g.ini.c_str());
+            wcsncpy(g.nid.szTip, T(S_TIP), 127);
+            g.nid.uFlags = NIF_TIP;
+            Shell_NotifyIconW(NIM_MODIFY, &g.nid);
+            g.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            if (g.play) buildHint();
+            break;
         case IDM_CURSOR:
             g.cursorPhys = !g.cursorPhys;
             g.world.setCursorPhysics(g.cursorPhys);
@@ -680,17 +755,14 @@ static bool offerMoveToD() {
     if (g.exe.size() < 3 || towupper(g.exe[0]) != L'C' || g.exe[1] != L':') return false;
     if (GetDriveTypeW(L"D:\\") != DRIVE_FIXED) return false;
     if (iniInt(L"AskedMove", 0)) return false;
-    int r = MessageBoxW(nullptr,
-        L"SnowDesk сейчас лежит на диске C:.\n\n"
-        L"Перенести программу и все её данные в папку D:\\SnowDesk?\n"
-        L"(рекомендуется — на диске C: ничего не останется)",
+    int r = MessageBoxW(nullptr, T(S_MOVE_Q),
         L"SnowDesk", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST);
     if (r != IDYES) { iniSet(L"AskedMove", 1); return false; }
     const std::wstring nd = L"D:\\SnowDesk";
     CreateDirectoryW(nd.c_str(), nullptr);
     std::wstring ne = nd + L"\\SnowDesk.exe";
     if (!CopyFileW(g.exe.c_str(), ne.c_str(), FALSE)) {
-        MessageBoxW(nullptr, L"Не получилось скопировать программу на диск D:. SnowDesk запустится с текущего места.",
+        MessageBoxW(nullptr, T(S_MOVE_FAIL),
                     L"SnowDesk", MB_OK | MB_ICONWARNING | MB_TOPMOST);
         return false;
     }
@@ -730,6 +802,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     g.dir = dirOf(g.exe);
     g.ini = g.dir + L"\\SnowDesk.ini";
     g.dat = g.dir + L"\\snow.dat";
+    {
+        wchar_t lang[16] = {0};
+        GetPrivateProfileStringW(L"Settings", L"Language", L"en", lang, 16, g.ini.c_str());
+        g_ru = _wcsicmp(lang, L"ru") == 0;
+    }
 
     std::wstring movedFrom;
     int argc = 0;
@@ -744,8 +821,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
         if (GetLastError() != ERROR_ALREADY_EXISTS) break;
         CloseHandle(g.mutex); g.mutex = nullptr;
         if (movedFrom.empty() || tries > 40) {
-            MessageBoxW(nullptr,
-                L"SnowDesk уже запущен.\n\nЕго значок-снежинка — справа внизу, у часов (может быть спрятан под стрелкой ^).",
+            MessageBoxW(nullptr, T(S_RUNNING),
                 L"SnowDesk", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
             return 0;
         }
@@ -764,7 +840,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
 
     getMonitor();
     if (!makeDib()) {
-        MessageBoxW(nullptr, L"Не хватило памяти для запуска SnowDesk.", L"SnowDesk", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, T(S_NOMEM), L"SnowDesk", MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -787,7 +863,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
                                 L"SnowDeskOverlay", L"SnowDesk", WS_POPUP,
                                 g.mon.left, g.mon.top, g.W, g.H, nullptr, nullptr, inst, nullptr);
     if (!g.ctl || !g.overlay) {
-        MessageBoxW(nullptr, L"Не удалось создать окно SnowDesk.", L"SnowDesk", MB_OK | MB_ICONERROR);
+        MessageBoxW(nullptr, T(S_NOWINDOW), L"SnowDesk", MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -806,9 +882,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     g.hotkeyOk = RegisterHotKey(g.ctl, HK_PLAY, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'S') != 0;
 
     if (!iniInt(L"Welcomed", 0)) {
-        balloon(L"SnowDesk запущен ❄",
-                g.hotkeyOk ? L"Ctrl+Alt+S или левый клик по снежинке у часов — играть со снегом. Правый клик — меню."
-                           : L"Левый клик по снежинке у часов — играть со снегом. Правый клик — меню.");
+        balloon(T(S_WELCOME_TITLE), g.hotkeyOk ? T(S_WELCOME_HK) : T(S_WELCOME));
         iniSet(L"Welcomed", 1);
     }
 

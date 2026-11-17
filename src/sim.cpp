@@ -515,6 +515,20 @@ void World::stepBalls(float dt) {
                 const Ball& s = balls[b.support];
                 if (s.state != BALL_REST) { b.state = BALL_FLY; b.support = -1; b.vx = b.vy = 0; b.thrown = false; }
                 else { b.x = s.x; b.y = s.y - (s.r + b.r) * 0.82f; }
+            } else if (b.onWin) {
+                // lying on a window: stays while the window stays put, falls when it moves / closes
+                const WinRect* w = nullptr;
+                for (const auto& o : wins) if (o.id == b.onWin) { w = &o; break; }
+                int dx = w ? w->l - b.winL : 0, dy = w ? w->t - b.winT : 0;
+                bool shaken = std::abs(dx) > 60 * S || std::abs(dy) > 60 * S;   // window yanked hard
+                if (!w || !w->pileable || shaken) {
+                    b.state = BALL_FLY; b.onWin = 0; b.thrown = false; b.lastWin = 0;
+                    b.vx = dx * 6.0f; b.vy = std::min(0.0f, dy * 6.0f);          // flung by the window's motion
+                } else {
+                    b.x += dx; b.winL = w->l; b.winT = w->t;                      // ride along with the window
+                    if (b.x < w->l || b.x >= w->r) { b.state = BALL_FLY; b.onWin = 0; b.vx = b.vy = 0; b.thrown = false; }
+                    else b.y = w->t - pileHeightAt(b.onWin, b.x) - b.r * 0.75f;
+                }
             } else {
                 int gx = clampi((int)b.x, 0, W - 1);
                 float target = groundY - ground[gx] - b.r * 0.75f;
@@ -562,6 +576,11 @@ void World::stepBalls(float dt) {
                 if (std::fabs(b.vy) < 120.0f * S) b.vy = 0;
                 b.vx *= std::exp(-1.6f * dt);
                 b.thrown = false;
+                if (b.vy == 0 && std::fabs(b.vx) < 35.0f * S) { // settled: now it can carry a snowman
+                    b.state = BALL_REST; b.support = -1; b.vx = 0;
+                    b.onWin = w.id; b.winL = w.l; b.winT = w.t;
+                    b.y = w.t - pileHeightAt(w.id, b.x) - b.r * 0.75f;
+                }
             }
             continue;
         }
@@ -579,7 +598,7 @@ void World::stepBalls(float dt) {
                 splat((int)i);
                 anyDead = true; done = true;
             } else if (dy < 0 && std::fabs(dx) < o.r * 0.8f) {
-                b.state = BALL_REST; b.support = (int)j; b.vx = b.vy = 0;
+                b.state = BALL_REST; b.support = (int)j; b.vx = b.vy = 0; b.onWin = 0;
                 b.x = o.x; b.y = o.y - (o.r + b.r) * 0.82f;
                 done = true;
             } else {
@@ -604,7 +623,7 @@ void World::stepBalls(float dt) {
                 ground[gx] -= take; b.vol += take;      // a rolling snowball grows a little
                 b.thrown = false;
             } else {
-                b.state = BALL_REST; b.support = -1; b.vx = 0;
+                b.state = BALL_REST; b.support = -1; b.vx = 0; b.onWin = 0;
             }
             continue;
         }
@@ -715,6 +734,23 @@ struct Reader {
 };
 }
 
+float World::pileHeightAt(uint64_t win, float x) const {
+    auto it = piles.find(win);
+    if (it == piles.end()) return 0;
+    int c = (int)x - it->second.l;
+    if (c < 0 || c >= it->second.w) return 0;
+    return it->second.h[c];
+}
+
+bool World::restsOnWindow(int i) const {
+    for (int guard = 0; i >= 0 && guard < 64; guard++) {
+        const Ball& b = balls[i];
+        if (b.support < 0) return b.onWin != 0;
+        i = b.support;
+    }
+    return false;
+}
+
 std::vector<uint8_t> World::save() const {
     Writer w;
     w.raw("SNOWDSK1", 8);
@@ -722,11 +758,12 @@ std::vector<uint8_t> World::save() const {
     for (float v : ground) w.f32(v / S);
     std::vector<int> idx(balls.size(), -1);
     int n = 0;
-    for (size_t i = 0; i < balls.size(); i++) if (balls[i].state == BALL_REST) idx[i] = n++;
+    for (size_t i = 0; i < balls.size(); i++)
+        if (balls[i].state == BALL_REST && !restsOnWindow((int)i)) idx[i] = n++;
     w.i32(n);
     for (size_t i = 0; i < balls.size(); i++) {
         const Ball& b = balls[i];
-        if (b.state != BALL_REST) continue;
+        if (idx[i] < 0) continue;
         int sup = b.support >= 0 ? idx[b.support] : -1;
         w.f32(b.x / W); w.f32((b.y - groundY) / S); w.f32(b.vol / (S * S)); w.i32(sup);
     }
