@@ -265,6 +265,36 @@ int World::hitTest(float x, float y) const {
     return 0;
 }
 
+void World::inputRects(std::vector<IRect>& out) const {
+    out.clear();
+    const int B = 6;
+    float minH = 3.0f * S, pad = 2.0f * S;
+    auto scan = [&](const std::vector<float>& h, int x0, int base, const std::vector<uint8_t>* vis) {
+        int n = (int)h.size();
+        IRect cur{0, 0, 0, 0};
+        bool open = false;
+        for (int c = 0; c < n; c += B) {
+            float m = 0;
+            for (int k = c; k < std::min(n, c + B); k++)
+                if ((!vis || (*vis)[k]) && h[k] > m) m = h[k];
+            int x = x0 + c;
+            if (m >= minH && x >= 0 && x < W) {
+                int top = (int)(base - m - pad);
+                if (open && std::abs(top - cur.y) <= 3 && cur.x + cur.w == x) { cur.w += B; cur.y = std::min(cur.y, top); cur.h = base - cur.y; }
+                else { if (open) out.push_back(cur); cur = {x, top, B, base - top}; open = true; }
+            } else if (open) { out.push_back(cur); open = false; }
+        }
+        if (open) out.push_back(cur);
+    };
+    scan(ground, 0, groundY, nullptr);
+    for (const Pile* P : pileOrder) scan(P->h, P->l, P->t, &P->vis);
+    for (const auto& b : balls) {
+        if (b.state == BALL_DEAD || b.r < 3) continue;
+        int r = (int)(b.r + 4 * S);
+        out.push_back({(int)b.x - r, (int)b.y - r, 2 * r, 2 * r});
+    }
+}
+
 // The arrow cursor is modelled as a small circle around its body (hotspot is the arrow tip).
 void World::cursorStep(float dt) {
     if (!cursorPhysics || !cursorValid || held >= 0) return;

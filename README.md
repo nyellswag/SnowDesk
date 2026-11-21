@@ -2,7 +2,7 @@
 
 **English** | [Русский](README.ru.md)
 
-SnowDesk puts snow on your Windows desktop. Flakes fall across the screen and pile up on the top edges of your windows.
+SnowDesk puts snow on your desktop, on Windows and Linux. Flakes fall across the screen and pile up on the top edges of your windows.
 When you close, minimize or move a window, the snow on it falls to the ground above the taskbar.
 You can scoop up the snow, make snowballs, throw them and stack them into a snowman.
 
@@ -38,7 +38,33 @@ The interface is in English by default; switch it to Russian in the tray menu un
 
 The snow hides itself while a fullscreen game or video is in front.
 
-## Where the data is stored
+## Linux
+
+1. **[⬇ Download snowdesk-linux-x86_64.tar.gz](https://github.com/nyellswag/SnowDesk/raw/main/download/snowdesk-linux-x86_64.tar.gz)** (about 300 KB).
+2. Unpack it and start the program:
+   ```sh
+   tar xzf snowdesk-linux-x86_64.tar.gz
+   ./snowdesk/snowdesk
+   ```
+3. A menu opens once to say hello. Later you open the menu with **Ctrl+Alt+M**, through the tray icon
+   (on desktops that have a system tray: KDE, Xfce, Cinnamon, MATE), or by running `snowdesk` again.
+   **Ctrl+Alt+S** turns Play Mode on or off.
+
+The snow, snowballs, windows and menu work the same as on Windows.
+
+- **X11 desktops get everything:** KDE Plasma (X11), Xfce, Cinnamon, MATE, and GNOME on Xorg.
+- **A compositor is needed** for transparency. GNOME, KDE and Cinnamon have one by default; on Xfce turn it on in
+  Settings → Window Manager Tweaks → Compositor.
+- **Wayland** (the default on newer Ubuntu and Fedora): SnowDesk runs through XWayland, but Wayland doesn't let programs
+  see other apps' windows. The snow falls and piles up at the bottom of the screen, but not on windows.
+  For the full effect, choose "GNOME on Xorg" or "Plasma (X11)" on the login screen.
+- **Requirements:** a 64-bit PC with glibc 2.27 or newer (Ubuntu 18.04+, Debian 10+, Fedora 28+ and similar),
+  plus the usual X11 libraries that every desktop already has.
+- **Files:** settings go to `~/.config/snowdesk/`, the saved snow to `~/.local/share/snowdesk/`, and autostart (if you turn it on)
+  to `~/.config/autostart/snowdesk.desktop`. "Uninstall SnowDesk completely" in the menu deletes all of these and the program file.
+- **Command line:** `snowdesk --menu`, `snowdesk --play`, `snowdesk --quit`.
+
+## Where the data is stored (Windows)
 
 Everything is kept next to `SnowDesk.exe`: `SnowDesk.ini` holds the settings and `snow.dat` holds the saved snow and snowmen.
 There is no installer and no shortcut, and the app does not touch system files.
@@ -63,8 +89,10 @@ and nothing else is left in it.
 The code is C++17 on the plain Win32 API, with no third-party libraries.
 
 - `src/sim.cpp`, `src/sim.h`: the snow simulation, which doesn't depend on Windows
-- `src/main.cpp`: the overlay window, tray icon, menu, autostart, move to D: and self-uninstall
-- `build.sh`: builds with mingw-w64, from Linux or from MSYS2 on Windows
+- `src/main.cpp`: the Windows version: overlay window, tray icon, menu, autostart, move to D: and self-uninstall
+- `src/linux/main_linux.cpp`: the Linux (X11) version: overlay, input shaping, tray icon, menu, shortcuts, autostart, self-uninstall
+- `build.sh`: builds the Windows version with mingw-w64, from Linux or from MSYS2 on Windows
+- `build_linux.sh`: builds the Linux version (needs `libx11-dev libxext-dev libxrandr-dev libxft-dev libxtst-dev`)
 - `tests/test_sim.cpp`: a test that runs the simulation without Windows and saves frames as image files
 
 ```sh

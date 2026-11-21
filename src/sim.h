@@ -54,6 +54,9 @@ public:
     void setCursorPhysics(bool on) { cursorPhysics = on; }
     // what is under a point: 0 = nothing, 1 = a snowball, 2 = a pile of snow
     int hitTest(float x, float y) const;
+    // screen areas the mouse can grab (drifts at least a few px deep, snowballs); used to shape input on Linux
+    struct IRect { int x, y, w, h; };
+    void inputRects(std::vector<IRect>& out) const;
 
     void clearSnow();
     void addDrift();

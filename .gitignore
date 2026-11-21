@@ -1,5 +1,6 @@
-*.res
-*.ppm
-*.png
 !download/SnowDesk.exe
+*.png
+*.ppm
+*.res
 /SnowDesk.exe
+/snowdesk
