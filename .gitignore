@@ -4,3 +4,4 @@
 *.res
 /SnowDesk.exe
 /snowdesk
+!docs/*.png

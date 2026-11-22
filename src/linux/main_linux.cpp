@@ -29,6 +29,7 @@
 #include <vector>
 #include <algorithm>
 #include "../sim.h"
+#include "../rain.h"
 
 static const float INTENSITY[4] = {0.4f, 1.0f, 2.0f, 4.0f};
 
@@ -37,7 +38,8 @@ static const float INTENSITY[4] = {0.4f, 1.0f, 2.0f, 4.0f};
 enum Str {
     S_PLAY, S_PAUSE, S_SNOWFALL, S_INT0, S_INT1, S_INT2, S_INT3, S_DRIFT, S_CLEAR, S_INTERACTIVE, S_CURSOR,
     S_AUTOSTART, S_FOLDER, S_LANGUAGE, S_UNINSTALL, S_UNINSTALL_SURE, S_EXIT, S_HINT, S_PLAY_LABEL,
-    S_NO_COMPOSITOR, S_COUNT
+    S_NO_COMPOSITOR, S_WEATHER, S_SNOW, S_RAIN, S_RAINFALL, S_RINT0, S_RINT1, S_RINT2, S_RINT3, S_POUR, S_DRAIN,
+    S_INTERACTIVE_RAIN, S_CURSOR_RAIN, S_COUNT
 };
 static const char* const STR_EN[S_COUNT] = {
     "Play Mode", "Pause (hide the snow)", "Snowfall", "Light", "Normal", "Heavy", "Blizzard",
@@ -45,6 +47,8 @@ static const char* const STR_EN[S_COUNT] = {
     "Start at login", "Open data folder", "Language", "Uninstall SnowDesk completely\xe2\x80\xa6",
     "Click again to uninstall", "Exit", "Ctrl+Alt+M opens this menu", "Play Mode  \xc2\xb7  Esc",
     "No compositor: the snow can't be transparent. Turn on desktop effects / a compositor.",
+    "Weather", "Snow", "Rain", "Rainfall", "Drizzle", "Rain", "Heavy rain", "Downpour",
+    "Make it pour", "Drain the water", "Scoop water balls without Play Mode", "Cursor splashes the rain",
 };
 static const char* const STR_RU[S_COUNT] = {
     "Режим игры", "Пауза (снег спрятан)", "Сила снегопада", "Лёгкий", "Обычный", "Сильный", "Метель",
@@ -52,6 +56,8 @@ static const char* const STR_RU[S_COUNT] = {
     "Запускать при входе в систему", "Открыть папку с данными", "Язык", "Удалить SnowDesk полностью\xe2\x80\xa6",
     "Нажмите ещё раз, чтобы удалить", "Выход", "Ctrl+Alt+M открывает это меню", "Режим игры  \xc2\xb7  Esc",
     "Нет композитора: снег не может быть прозрачным. Включите эффекты рабочего стола.",
+    "Погода", "Снег", "Дождь", "Сила дождя", "Морось", "Дождь", "Сильный дождь", "Ливень",
+    "Устроить ливень", "Слить воду", "Набирать водяные шары без режима игры", "Курсор отбивает капли",
 };
 static bool g_ru = false;
 static const char* T(Str s) { return (g_ru ? STR_RU : STR_EN)[s]; }
@@ -78,18 +84,21 @@ struct App {
     int monX = 0, monY = 0, W = 0, H = 0, groundY = 0;
     float scale = 1;
     Atoms a{};
-    World world;
+    World snow;
+    Rain rain;
+    Effect* fx = &snow;
+    int mode = 0;                  // 0 snow, 1 rain
     // settings
     int intensityIdx = 1;
     bool interactive = true, cursorPhys = true, welcomed = false;
     // paths
-    std::string bin, cfgDir, dataDir, ini, dat, autostartFile, sockPath;
+    std::string bin, cfgDir, dataDir, ini, dat, datRain, autostartFile, sockPath;
     // runtime
     bool paused = false, play = false, hiddenFS = false, mapped = false, quit = false, compositor = true, uninstalled = false;
     double lastEnum = 0, lastTop = 0, lastSave = 0, lastInput = 0, lastFrame = 0, lastShape = 0, lastMon = 0;
     bool grab = false, grabMoved = false, grabBall = false;
     double grabT = 0; float grabX = 0, grabY = 0;
-    std::vector<World::IRect> shapeRects;
+    std::vector<Effect::IRect> shapeRects;
     bool shapeFull = false;
     int sockFd = -1;
     // hotkeys
@@ -150,17 +159,19 @@ static void mkdirs(const std::string& p) {
 }
 
 static void saveSnow() {
-    auto d = g.world.save();
     mkdirs(g.dataDir);
+    auto d = g.snow.save();
     writeFileAtomic(g.dat, d.data(), d.size());
+    auto r = g.rain.save();
+    writeFileAtomic(g.datRain, r.data(), r.size());
     g.lastSave = now();
 }
 
 static void saveSettings() {
     mkdirs(g.cfgDir);
     char buf[256];
-    int n = snprintf(buf, sizeof(buf), "intensity=%d\ninteractive=%d\ncursor=%d\nlanguage=%s\nwelcomed=%d\n",
-                     g.intensityIdx, g.interactive ? 1 : 0, g.cursorPhys ? 1 : 0, g_ru ? "ru" : "en", g.welcomed ? 1 : 0);
+    int n = snprintf(buf, sizeof(buf), "intensity=%d\ninteractive=%d\ncursor=%d\nlanguage=%s\nwelcomed=%d\nmode=%d\n",
+                     g.intensityIdx, g.interactive ? 1 : 0, g.cursorPhys ? 1 : 0, g_ru ? "ru" : "en", g.welcomed ? 1 : 0, g.mode);
     writeFileAtomic(g.ini, buf, (size_t)n);
 }
 
@@ -183,6 +194,7 @@ static void loadSettings() {
         else if (k == "cursor") g.cursorPhys = atoi(v.c_str()) != 0;
         else if (k == "language") g_ru = v == "ru";
         else if (k == "welcomed") g.welcomed = atoi(v.c_str()) != 0;
+        else if (k == "mode") g.mode = atoi(v.c_str()) == 1 ? 1 : 0;
     }
 }
 
@@ -304,7 +316,7 @@ static void showOverlay(bool show) {
 
 // ---------------------------------------------------------------- input shape: clicks go through, except on snow
 
-static void setShapeRects(const std::vector<World::IRect>& rs, bool full) {
+static void setShapeRects(const std::vector<Effect::IRect>& rs, bool full) {
     std::vector<XRectangle> xr;
     if (full) xr.push_back({0, 0, (unsigned short)std::min(g.W, 65535), (unsigned short)std::min(g.H, 65535)});
     else
@@ -320,10 +332,10 @@ static void updateShape(bool force) {
         if (!g.shapeFull || force) { setShapeRects({}, true); g.shapeFull = true; }
         return;
     }
-    std::vector<World::IRect> rs;
-    if (g.interactive) g.world.inputRects(rs);
+    std::vector<Effect::IRect> rs;
+    if (g.interactive) g.fx->inputRects(rs);
     bool same = !g.shapeFull && rs.size() == g.shapeRects.size() &&
-                std::equal(rs.begin(), rs.end(), g.shapeRects.begin(), [](const World::IRect& a, const World::IRect& b) {
+                std::equal(rs.begin(), rs.end(), g.shapeRects.begin(), [](const Effect::IRect& a, const Effect::IRect& b) {
                     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h; });
     if (same && !force) return;
     g.shapeRects = rs; g.shapeFull = false;
@@ -472,17 +484,17 @@ static void grabEsc(bool on) {
 static void setPlay(bool on) {
     if (on == g.play) return;
     if (on && g.paused) return;
-    if (g.grab) { g.grab = false; g.world.cancelHold(); }
+    if (g.grab) { g.grab = false; g.fx->cancelHold(); }
     g.play = on;
     if (on) { g.lastInput = now(); buildHint(); }
-    else { g.world.cancelHold(); XUngrabPointer(g.dpy, CurrentTime); }
+    else { g.fx->cancelHold(); XUngrabPointer(g.dpy, CurrentTime); }
     grabEsc(on);
     updateShape(true);
 }
 
 static void setPaused(bool p) {
     if (p == g.paused) return;
-    if (p) { setPlay(false); if (g.grab) { g.grab = false; g.world.cancelHold(); } saveSnow(); showOverlay(false); }
+    if (p) { setPlay(false); if (g.grab) { g.grab = false; g.fx->cancelHold(); } saveSnow(); showOverlay(false); }
     g.paused = p;
     g.lastFrame = now();
 }
@@ -490,7 +502,7 @@ static void setPaused(bool p) {
 // ---------------------------------------------------------------- menu (drawn with Xft, no toolkit needed)
 
 enum Cmd { C_NONE, C_PLAY, C_PAUSE, C_INT0, C_INT1, C_INT2, C_INT3, C_DRIFT, C_CLEAR, C_INTERACTIVE, C_CURSOR,
-           C_AUTOSTART, C_FOLDER, C_EN, C_RU, C_UNINSTALL, C_EXIT };
+           C_AUTOSTART, C_FOLDER, C_EN, C_RU, C_UNINSTALL, C_EXIT, C_SNOW, C_RAIN };
 struct Item { std::string text, right; Cmd cmd; int mark; bool sep, header; };   // mark: 0 none, 1 check, 2 radio off, 3 radio on, 4 check off
 
 static std::vector<Item> g_items;
@@ -505,13 +517,17 @@ static void buildItems() {
     sep();
     add(T(S_PLAY), C_PLAY, g.play ? 1 : 4, "Ctrl+Alt+S");
     add(T(S_PAUSE), C_PAUSE, g.paused ? 1 : 4);
-    header(T(S_SNOWFALL));
-    for (int i = 0; i < 4; i++) add(T((Str)(S_INT0 + i)), (Cmd)(C_INT0 + i), g.intensityIdx == i ? 3 : 2);
-    add(T(S_DRIFT), C_DRIFT);
-    add(T(S_CLEAR), C_CLEAR);
+    bool rain = g.mode == 1;
+    header(T(S_WEATHER));
+    add(T(S_SNOW), C_SNOW, rain ? 2 : 3);
+    add(T(S_RAIN), C_RAIN, rain ? 3 : 2);
+    header(T(rain ? S_RAINFALL : S_SNOWFALL));
+    for (int i = 0; i < 4; i++) add(T((Str)((rain ? S_RINT0 : S_INT0) + i)), (Cmd)(C_INT0 + i), g.intensityIdx == i ? 3 : 2);
+    add(T(rain ? S_POUR : S_DRIFT), C_DRIFT);
+    add(T(rain ? S_DRAIN : S_CLEAR), C_CLEAR);
     sep();
-    add(T(S_INTERACTIVE), C_INTERACTIVE, g.interactive ? 1 : 4);
-    add(T(S_CURSOR), C_CURSOR, g.cursorPhys ? 1 : 4);
+    add(T(rain ? S_INTERACTIVE_RAIN : S_INTERACTIVE), C_INTERACTIVE, g.interactive ? 1 : 4);
+    add(T(rain ? S_CURSOR_RAIN : S_CURSOR), C_CURSOR, g.cursorPhys ? 1 : 4);
     sep();
     add(T(S_AUTOSTART), C_AUTOSTART, autostartOn() ? 1 : 4);
     add(T(S_FOLDER), C_FOLDER);
@@ -633,6 +649,7 @@ static int menuItemAt(int x, int y) {
 static void uninstallNow() {
     setAutostart(false);
     unlink(g.dat.c_str()); unlink((g.dat + ".tmp").c_str());
+    unlink(g.datRain.c_str()); unlink((g.datRain + ".tmp").c_str());
     unlink(g.ini.c_str()); unlink((g.ini + ".tmp").c_str());
     rmdir(g.dataDir.c_str()); rmdir(g.cfgDir.c_str());
     // Linux lets a running program delete its own file; only touch it if it's really ours
@@ -649,11 +666,25 @@ static void runCmd(Cmd c) {
     case C_PLAY: if (g.paused) setPaused(false); setPlay(!g.play); break;
     case C_PAUSE: setPaused(!g.paused); break;
     case C_INT0: case C_INT1: case C_INT2: case C_INT3:
-        g.intensityIdx = c - C_INT0; g.world.setIntensity(INTENSITY[g.intensityIdx]); saveSettings(); break;
-    case C_DRIFT: g.world.addDrift(); break;
-    case C_CLEAR: g.world.clearSnow(); saveSnow(); break;
+        g.intensityIdx = c - C_INT0; g.snow.setIntensity(INTENSITY[g.intensityIdx]); g.rain.setIntensity(INTENSITY[g.intensityIdx]); saveSettings(); break;
+    case C_SNOW: case C_RAIN: {
+        int m = c == C_RAIN ? 1 : 0;
+        if (m != g.mode) {
+            if (g.grab) g.grab = false;
+            g.fx->cancelHold();
+            saveSnow();
+            g.mode = m;
+            g.fx = m == 1 ? (Effect*)&g.rain : (Effect*)&g.snow;
+            saveSettings();
+            g.lastEnum = 0;
+            updateShape(true);
+        }
+        break;
+    }
+    case C_DRIFT: g.fx->addDrift(); break;
+    case C_CLEAR: g.fx->clearSnow(); saveSnow(); break;
     case C_INTERACTIVE: g.interactive = !g.interactive; saveSettings(); updateShape(true); break;
-    case C_CURSOR: g.cursorPhys = !g.cursorPhys; g.world.setCursorPhysics(g.cursorPhys); saveSettings(); break;
+    case C_CURSOR: g.cursorPhys = !g.cursorPhys; g.snow.setCursorPhysics(g.cursorPhys); g.rain.setCursorPhysics(g.cursorPhys); saveSettings(); break;
     case C_AUTOSTART: setAutostart(!autostartOn()); break;
     case C_FOLDER: mkdirs(g.dataDir); spawn("xdg-open", g.dataDir.c_str()); break;
     case C_EN: case C_RU: g_ru = c == C_RU; saveSettings(); if (g.play) buildHint(); break;
@@ -845,19 +876,19 @@ static void handleEvent(XEvent& e) {
         x = (float)e.xbutton.x; y = (float)e.xbutton.y;
         if (e.xbutton.button == 3) { if (g.play) setPlay(false); else openMenu(e.xbutton.x_root, e.xbutton.y_root); break; }
         if (e.xbutton.button != 1) break;
-        if (g.play) { g.world.mouseDown(x, y, t); g.lastInput = t; break; }
+        if (g.play) { g.fx->mouseDown(x, y, t); g.lastInput = t; break; }
         if (g.interactive) {
-            int hit = g.world.hitTest(x, y);
+            int hit = g.fx->hitTest(x, y);
             g.grab = true; g.grabMoved = false; g.grabBall = hit == 1;
             g.grabT = t; g.grabX = x; g.grabY = y;
-            g.world.mouseDown(x, y, t);
+            g.fx->mouseDown(x, y, t);
         }
         break;
     case MotionNotify:
         x = (float)e.xmotion.x; y = (float)e.xmotion.y;
-        if (g.play) { g.world.mouseMove(x, y, t); g.lastInput = t; }
+        if (g.play) { g.fx->mouseMove(x, y, t); g.lastInput = t; }
         else if (g.grab) {
-            g.world.mouseMove(x, y, t);
+            g.fx->mouseMove(x, y, t);
             float dx = x - g.grabX, dy = y - g.grabY;
             if (dx * dx + dy * dy > 25.0f * g.scale * g.scale) g.grabMoved = true;
         }
@@ -865,11 +896,11 @@ static void handleEvent(XEvent& e) {
     case ButtonRelease:
         if (e.xbutton.button != 1) break;
         x = (float)e.xbutton.x; y = (float)e.xbutton.y;
-        if (g.play) { g.world.mouseUp(x, y, t); break; }
+        if (g.play) { g.fx->mouseUp(x, y, t); break; }
         if (g.grab) {
             g.grab = false;
             bool quick = !g.grabMoved && (t - g.grabT) < 0.25;
-            g.world.mouseUp(x, y, t);
+            g.fx->mouseUp(x, y, t);
             if (quick && !g.grabBall) replayClick();
         }
         break;
@@ -890,18 +921,18 @@ static void frame() {
         std::vector<WinRect> ws = enumWindows(fs);
         g.hiddenFS = fs;
         if (fs) setPlay(false);
-        else g.world.setWindows(ws);
+        else g.fx->setWindows(ws);
     }
     if (g.hiddenFS) { showOverlay(false); return; }
 
     Window r, c; int rx, ry, wx, wy; unsigned m;
     bool ok = XQueryPointer(g.dpy, g.root, &r, &c, &rx, &ry, &wx, &wy, &m) &&
               rx >= g.monX && rx < g.monX + g.W && ry >= g.monY && ry < g.monY + g.H;
-    g.world.setCursor((float)(rx - g.monX), (float)(ry - g.monY), t, ok);
-    g.world.step(dt);
+    g.fx->setCursor((float)(rx - g.monX), (float)(ry - g.monY), t, ok);
+    g.fx->step(dt);
     if (g.play) std::fill(g.bits, g.bits + (size_t)g.W * g.H, 0x01000000u);   // invisible, but catches the mouse
     else memset(g.bits, 0, (size_t)g.W * g.H * 4);
-    g.world.render(g.bits);
+    g.fx->render(g.bits);
     if (g.play) drawHint();
     present();
     showOverlay(true);
@@ -918,7 +949,8 @@ static void reconfigure() {
     queryMonitor();
     if (oX == g.monX && oY == g.monY && oW == g.W && oH == g.H && oG == g.groundY) return;
     makeImage();
-    g.world.resize(g.W, g.H, g.groundY);
+    g.snow.resize(g.W, g.H, g.groundY);
+    g.rain.resize(g.W, g.H, g.groundY);
     XMoveResizeWindow(g.dpy, g.ov, g.monX, g.monY, g.W, g.H);
     updateShape(true);
 }
@@ -965,6 +997,7 @@ int main(int argc, char** argv) {
     g.dataDir = (xd && *xd ? std::string(xd) : h + "/.local/share") + "/snowdesk";
     g.ini = g.cfgDir + "/settings.ini";
     g.dat = g.dataDir + "/snow.dat";
+    g.datRain = g.dataDir + "/rain.dat";
     g.autostartFile = cfgBase + "/autostart/snowdesk.desktop";
     const char* rt = getenv("XDG_RUNTIME_DIR");
     g.sockPath = rt && *rt ? std::string(rt) + "/snowdesk.sock" : "/tmp/snowdesk-" + std::to_string(getuid()) + ".sock";
@@ -1064,11 +1097,15 @@ int main(int argc, char** argv) {
         XGrabKey(g.dpy, g.kcM, ControlMask | Mod1Mask | mm, g.root, True, GrabModeAsync, GrabModeAsync);
     }
 
-    g.world.setIntensity(INTENSITY[g.intensityIdx]);
-    g.world.setCursorPhysics(g.cursorPhys);
-    g.world.init(g.W, g.H, g.groundY, g.scale);
+    for (Effect* e : {(Effect*)&g.snow, (Effect*)&g.rain}) {
+        e->setIntensity(INTENSITY[g.intensityIdx]);
+        e->setCursorPhysics(g.cursorPhys);
+        e->init(g.W, g.H, g.groundY, g.scale);
+    }
     std::vector<uint8_t> data;
-    if (readFile(g.dat, data)) g.world.load(data);
+    if (readFile(g.dat, data)) g.snow.load(data);
+    if (readFile(g.datRain, data)) g.rain.load(data);
+    g.fx = g.mode == 1 ? (Effect*)&g.rain : (Effect*)&g.snow;
 
     if (autostartOn()) setAutostart(true);       // keep the autostart entry pointing at this file
     listenSocket();

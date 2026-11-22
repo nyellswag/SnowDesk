@@ -4,12 +4,7 @@
 #include <vector>
 #include <unordered_map>
 
-// A top-level window as seen by the simulation (overlay pixel coords), in z-order (topmost first).
-struct WinRect {
-    uint64_t id;
-    int l, t, r, b;
-    bool pileable;   // normal, non-maximized app window: snow can lie on it
-};
+#include "effect.h"
 
 struct Pile {
     int l = 0, t = 0, w = 0;
@@ -36,34 +31,33 @@ struct Ball {
     int winL = 0, winT = 0;      // where that window was when the ball settled
 };
 
-class World {
+class World : public Effect {
 public:
-    void init(int w, int h, int groundY, float scale);
-    void resize(int w, int h, int groundY);
-    void setWindows(const std::vector<WinRect>& ws);
-    void step(float dt);
-    void render(uint32_t* px) const;  // W*H premultiplied 0xAARRGGBB, blends over existing content
+    void init(int w, int h, int groundY, float scale) override;
+    void resize(int w, int h, int groundY) override;
+    void setWindows(const std::vector<WinRect>& ws) override;
+    void step(float dt) override;
+    void render(uint32_t* px) const override;  // W*H premultiplied 0xAARRGGBB, blends over existing content
 
-    void mouseDown(float x, float y, double t);
-    void mouseMove(float x, float y, double t);
-    void mouseUp(float x, float y, double t);
-    void cancelHold();
+    void mouseDown(float x, float y, double t) override;
+    void mouseMove(float x, float y, double t) override;
+    void mouseUp(float x, float y, double t) override;
+    void cancelHold() override;
 
     // mouse cursor as a physical obstacle (call every frame); valid=false when the cursor is off this screen
-    void setCursor(float x, float y, double t, bool valid);
-    void setCursorPhysics(bool on) { cursorPhysics = on; }
+    void setCursor(float x, float y, double t, bool valid) override;
+    void setCursorPhysics(bool on) override { cursorPhysics = on; }
     // what is under a point: 0 = nothing, 1 = a snowball, 2 = a pile of snow
-    int hitTest(float x, float y) const;
+    int hitTest(float x, float y) const override;
     // screen areas the mouse can grab (drifts at least a few px deep, snowballs); used to shape input on Linux
-    struct IRect { int x, y, w, h; };
-    void inputRects(std::vector<IRect>& out) const;
+    void inputRects(std::vector<IRect>& out) const override;
 
-    void clearSnow();
-    void addDrift();
-    void setIntensity(float k) { intensity = k; }
+    void clearSnow() override;
+    void addDrift() override;
+    void setIntensity(float k) override { intensity = k; }
 
-    std::vector<uint8_t> save() const;
-    bool load(const std::vector<uint8_t>& d);
+    std::vector<uint8_t> save() const override;
+    bool load(const std::vector<uint8_t>& d) override;
 
     int width() const { return W; }
     int height() const { return H; }
