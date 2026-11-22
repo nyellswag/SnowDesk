@@ -42,8 +42,6 @@ The snow hides itself while a fullscreen game or video is in front.
 
 ## Rain
 
-![Rain on the desktop](docs/rain.png)
-
 Pick **Weather → Rain** in the tray menu (the snow and the water are both kept, switch back any time).
 
 - Raindrops fall in the wind and splash on the tops of windows, on the cursor and on the water.
@@ -55,8 +53,6 @@ Pick **Weather → Rain** in the tray menu (the snow and the water are both kept
   bursts on a window, the screen edge or the water. Most of that water turns to spray and is gone, only about a quarter comes back.
 - **Whirlpool:** stir the water quickly in circles with the cursor; it fades a few seconds after you stop.
 - "Make it pour" starts a short downpour, "Drain the water" empties the pool.
-
-![Water ball and whirlpool](docs/rain_play.png)
 
 ## Linux
 
