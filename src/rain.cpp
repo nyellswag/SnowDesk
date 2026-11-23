@@ -13,6 +13,10 @@ inline void blend(uint32_t* px, int r, int g, int b, float a) {
     if (a <= 0.003f) return;
     if (a > 1) a = 1;
     uint32_t d = *px;
+    if (d == 0) {   // nothing under it yet (most of the screen): no mixing needed
+        *px = ((uint32_t)(255 * a + 0.5f) << 24) | ((uint32_t)(r * a + 0.5f) << 16) | ((uint32_t)(g * a + 0.5f) << 8) | (uint32_t)(b * a + 0.5f);
+        return;
+    }
     float ia = 1.0f - a;
     int da = (d >> 24) & 255, dr = (d >> 16) & 255, dg = (d >> 8) & 255, db = d & 255;
     int oa = (int)(255 * a + da * ia + 0.5f);
@@ -21,6 +25,17 @@ inline void blend(uint32_t* px, int r, int g, int b, float a) {
     int ob = (int)(b * a + db * ia + 0.5f);
     *px = ((uint32_t)std::min(oa, 255) << 24) | ((uint32_t)std::min(orr, 255) << 16) |
           ((uint32_t)std::min(og, 255) << 8) | (uint32_t)std::min(ob, 255);
+}
+
+inline void blendPre(uint32_t* px, uint32_t s) {
+    uint32_t sa = s >> 24;
+    if (!sa) return;
+    uint32_t d = *px, ia = 255 - sa;
+    uint32_t a = sa + (((d >> 24) & 255) * ia + 127) / 255;
+    uint32_t r = ((s >> 16) & 255) + (((d >> 16) & 255) * ia + 127) / 255;
+    uint32_t g = ((s >> 8) & 255) + (((d >> 8) & 255) * ia + 127) / 255;
+    uint32_t b = (s & 255) + ((d & 255) * ia + 127) / 255;
+    *px = (std::min(a, 255u) << 24) | (std::min(r, 255u) << 16) | (std::min(g, 255u) << 8) | std::min(b, 255u);
 }
 
 struct Canvas {
@@ -74,7 +89,8 @@ void Rain::init(int w, int h, int gy, float scale) {
     NC = (int)std::ceil(W / cw) + 1;
     lvl.assign(NC, 0.0f);
     vel.assign(NC, 0.0f);
-    drops.clear(); balls.clear(); puddles.clear(); held = -1;
+    rip.assign(NC, 0.0f); ripv.assign(NC, 0.0f); foam.assign(NC, 0.0f);
+    drops.clear(); balls.clear(); puddles.clear(); sdrops.clear(); held = -1;
     windTarget = wind = rndr(-60, 60) * S;
 }
 
@@ -84,7 +100,8 @@ void Rain::resize(int w, int h, int gy) {
     NC = (int)std::ceil(W / cw) + 1;
     lvl.assign(NC, std::min(m, maxLevel()));
     vel.assign(NC, 0.0f);
-    drops.clear();
+    rip.assign(NC, 0.0f); ripv.assign(NC, 0.0f); foam.assign(NC, 0.0f);
+    drops.clear(); sdrops.clear();
     balls.clear(); held = -1;
 }
 
@@ -114,7 +131,7 @@ float Rain::surfaceY(float x) const {
     int i0 = (int)std::floor(f);
     float t = f - i0;
     int a = std::max(0, std::min(NC - 1, i0)), b = std::max(0, std::min(NC - 1, i0 + 1));
-    return H - (lvl[a] * (1 - t) + lvl[b] * t);
+    return H - (surfaceAt(a) * (1 - t) + surfaceAt(b) * t);
 }
 
 float Rain::poolBelow(float x, float y) const {
@@ -149,6 +166,91 @@ float Rain::takeWater(float x, float radius, float vol) {
     float k = take / avail;
     for (int i = c0; i <= c1; i++) lvl[i] -= lvl[i] * k;
     return take;
+}
+
+// small fast ripples: a raindrop, a bubble popping
+void Rain::ripple(int i, float v) {
+    if (i < 0 || i >= NC || v == 0) return;
+    ripv[i] -= v;
+    if (i > 1) ripv[i - 2] += v * 0.5f; else ripv[i] += v * 0.5f;
+    if (i < NC - 2) ripv[i + 2] += v * 0.5f; else ripv[i] += v * 0.5f;
+}
+
+// drops thrown onto the screen glass around (x, y)
+void Rain::splatScreen(float x, float y, int n, float spread, float maxR) {
+    for (int k = 0; k < n && sdrops.size() < 140; k++) {
+        float a = rndr(0, 2 * PI), d = spread * std::sqrt(rnd());
+        SDrop s{};
+        s.x = x + std::cos(a) * d; s.y = y + std::sin(a) * d * 0.8f;
+        if (s.x < 0 || s.x >= W || s.y < 0 || s.y >= H) continue;
+        float u = rnd();
+        s.r = 1.3f * S + (maxR - 1.3f * S) * u * u;      // mostly small, a few big ones
+        s.hold = rndr(0.2f, 2.5f);
+        s.life = rndr(25, 70);
+        sdrops.push_back(s);
+    }
+}
+
+void Rain::stepScreen(float dt) {
+    // now and then a raindrop lands on the screen itself
+    float rate = intensity * 1.1f * (burst > 0 ? 3.0f : 1.0f) * (W * (float)H) / (1920.0f * 1080.0f * S * S);
+    screenAcc += rate * dt;
+    while (screenAcc >= 1) {
+        screenAcc -= 1;
+        if (sdrops.size() >= 90) continue;
+        SDrop s{};
+        s.x = rndr(0, (float)W); s.y = rndr(0, H * 0.92f);
+        float u = rnd();
+        s.r = (1.5f + 6.5f * u * u * u) * S;
+        s.hold = rndr(0.5f, 6);
+        s.life = rndr(30, 90);
+        sdrops.push_back(s);
+    }
+    for (size_t i = 0; i < sdrops.size(); i++) {
+        SDrop& d = sdrops[i];
+        d.life -= dt;
+        if (d.life < 0) d.r -= 0.25f * S * dt;                       // drying up
+        bool heavy = d.r > 3.4f * S;
+        if (heavy && d.hold <= 0) {
+            float vmax = (30 + (d.r / S - 3.4f) * 45) * S;
+            d.vy += (vmax - d.vy) * std::min(1.0f, dt * 3);
+            float dy = d.vy * dt;
+            d.y += dy;
+            d.x += rndr(-1, 1) * 6 * S * dt;
+            d.trail = std::min(d.trail + dy, 160 * S);
+            d.travelled += dy;
+            if (d.travelled > rndr(8, 22) * S) {                          // leaves little beads behind
+                d.travelled = 0;
+                if (rnd() < 0.45f && sdrops.size() < 140) {
+                    SDrop b{};
+                    b.x = d.x + rndr(-1, 1) * S; b.y = d.y - d.r * 1.6f;
+                    b.r = rndr(0.8f, 1.4f) * S; b.hold = 1e9f; b.life = rndr(8, 25);
+                    d.r = std::sqrt(std::max(d.r * d.r - b.r * b.r, 1.0f));
+                    sdrops.push_back(b);
+                }
+            }
+            if (rnd() < dt * 0.5f) { d.hold = rndr(0.3f, 2.5f); d.vy = 0; }
+        } else {
+            if (d.hold > 0) d.hold -= dt;
+            d.trail = std::max(0.0f, d.trail - 25 * S * dt);
+        }
+    }
+    // drops that touch run together
+    for (size_t i = 0; i < sdrops.size(); i++)
+        for (size_t j = i + 1; j < sdrops.size(); j++) {
+            SDrop& a = sdrops[i]; SDrop& b = sdrops[j];
+            if (a.r <= 0 || b.r <= 0) continue;
+            float dx = a.x - b.x, dy = a.y - b.y, rr = (a.r + b.r) * 0.85f;
+            if (dx * dx + dy * dy > rr * rr) continue;
+            SDrop& big = a.r >= b.r ? a : b;
+            SDrop& small = a.r >= b.r ? b : a;
+            big.r = std::sqrt(big.r * big.r + small.r * small.r);
+            big.hold = std::min(big.hold, 0.1f);
+            big.life = std::max(big.life, small.life);
+            small.r = 0;
+        }
+    sdrops.erase(std::remove_if(sdrops.begin(), sdrops.end(), [&](const SDrop& d) {
+        return d.r < 0.7f * S || d.y - d.r > H; }), sdrops.end());
 }
 
 int Rain::topWindowAt(float x, float y) const {
@@ -324,16 +426,48 @@ void Rain::step(float dt) {
     stepBalls(dt);
     stepSwirl(dt);
     stepPool(dt);
+    stepScreen(dt);
 }
 
 void Rain::stepPool(float dt) {
-    // the cursor moving through the water pushes a bow wave and leaves a wake
-    if (cursorPhysics && cursorValid && held < 0 && poolBelow(curX, curY) > 2 * S) {
-        float sp = clampf(curVx, -2500 * S, 2500 * S);
-        float imp = sp * 0.04f * dt * 60;
-        int ahead = colOf(curX + (sp > 0 ? 10 : -10) * S), behind = colOf(curX - (sp > 0 ? 10 : -10) * S);
-        vel[ahead] += std::fabs(imp) * 0.5f;
-        vel[behind] -= std::fabs(imp) * 0.5f;
+    // the cursor moving through the water: it shoves the water ahead of it, lifts or drags the surface
+    // above it (more the closer it is to the surface) and leaves a trail of bubbles
+    if (cursorPhysics && cursorValid && held < 0) {
+        float depth = poolBelow(curX, curY);
+        if (depth > 0) {
+            float near = std::exp(-depth / (45 * S));
+            float sp = std::sqrt(curVx * curVx + curVy * curVy);
+            int c = colOf(curX);
+            float f = std::min(1.0f, dt * 60);                     // per-frame strength, frame-rate independent
+            // the cursor is a body moving in the water: over a stretch of the surface around it, the water in front
+            // is shoved up and the water behind falls in; moving up lifts the surface above, diving pulls it down
+            float lat = clampf(curVx, -2500 * S, 2500 * S), ver = clampf(curVy, -2500 * S, 2500 * S);
+            float sig = 18 * S;
+            int c0 = colOf(curX - 3 * sig), c1 = colOf(curX + 3 * sig);
+            float sum = 0;
+            for (int i = c0; i <= c1; i++) {
+                float u = ((i + 0.5f) * cw - curX) / sig;
+                float g = std::exp(-u * u);
+                float dv = (lat * u * 0.9f - ver * 0.55f) * g * near * f;
+                vel[i] += dv;
+                sum += dv;
+            }
+            for (int i = c0; i <= c1; i++) vel[i] -= sum / (c1 - c0 + 1);   // no water created or lost
+            ripple(c, std::min(sp, 2500 * S) * 0.08f * near * f);
+            foam[c] = std::min(1.0f, foam[c] + sp / (1500 * S) * dt * 6 * near);
+            float bub = std::max(0.0f, sp - 80 * S) / (12 * S) * dt;
+            while (bub > 0 && drops.size() < 4000) {
+                if (rnd() < bub) {
+                    Drop d{};
+                    d.kind = D_BUBBLE;
+                    d.x = curX + rndr(-5, 5) * S; d.y = curY + rndr(-4, 4) * S;
+                    d.vx = -curVx * rndr(0.05f, 0.2f); d.vy = rndr(-60, 0) * S;
+                    d.len = rndr(0.9f, 2.6f) * S; d.life = 6; d.a = rndr(0.5f, 0.85f);
+                    drops.push_back(d);
+                }
+                bub -= 1;
+            }
+        }
     }
 
     // whirlpool: a funnel around swirlX with a raised rim; forces sum to zero so no water appears or vanishes
@@ -371,11 +505,30 @@ void Rain::stepPool(float dt) {
             }
             if (n) { float corr = sum / n; for (int i = c0; i <= c1; i++) vel[i] -= corr; }
         }
+        {   // the ripple layer: faster, short-lived waves on top
+            float cr = 420 * S / cw, kr = cr * cr;
+            for (int i = 0; i < NC; i++) {
+                float l = rip[i > 0 ? i - 1 : i], r = rip[i < NC - 1 ? i + 1 : i];
+                ripv[i] += (kr * (l + r - 2 * rip[i]) - 5.0f * ripv[i] - 60.0f * rip[i]) * h;
+            }
+            for (int i = 0; i < NC; i++) {
+                rip[i] += ripv[i] * h;
+                float lim = std::max(1.0f, lvl[i] * 0.8f + 2 * S);     // ripples can't be taller than the water is deep
+                rip[i] = clampf(rip[i], -lim, lim);
+            }
+        }
         for (int i = 0; i < NC; i++) {
             lvl[i] += vel[i] * h;
             if (lvl[i] < 0) { lvl[i] = 0; if (vel[i] < 0) vel[i] = 0; }
             if (!(lvl[i] < 4.0f * H)) { lvl[i] = 0; vel[i] = 0; }    // never let a glitch spread (also catches NaN)
         }
+    }
+
+    // white water fades; fast-moving water makes more of it
+    for (int i = 0; i < NC; i++) {
+        float v = std::fabs(vel[i]) + std::fabs(ripv[i]) * 0.3f;
+        if (v > 160 * S) foam[i] = std::min(1.0f, foam[i] + (v - 160 * S) / (2000 * S) * dt * 10);
+        foam[i] = std::max(0.0f, foam[i] - dt * 0.7f);
     }
 
     // slowly soaks away; much faster when it's above the maximum
@@ -504,8 +657,15 @@ void Rain::stepDrops(float dt) {
                 kill = true; break;
             }
             if (d.y >= ys) {
-                addWater(d.x, d.vol, 6 * S);
-                if (rnd() < 0.45f) splash(d.x, ys, d.vx * 0.1f, 0, 1 + (int)(rnd() * 2), 0, 130 * S);
+                float x = d.x;
+                addWater(x, d.vol, 2 * S);
+                ripple(colOf(x), 70 * S);
+                if (rnd() < 0.45f) splash(x, ys, d.vx * 0.1f, 0, 1 + (int)(rnd() * 2), 0, 130 * S);
+                if (rnd() < 0.5f && meanLevel() > 3 * S) {
+                    Drop r{};
+                    r.kind = D_RING; r.x = x; r.ox = 1.5f * S; r.oy = rndr(9, 18) * S; r.life = r.a = rndr(0.35f, 0.6f);
+                    drops.push_back(r);
+                }
                 kill = true; break;
             }
             break;
@@ -575,6 +735,37 @@ void Rain::stepDrops(float dt) {
             }
             break;
         }
+        case D_BUBBLE: {
+            d.vy -= 700 * S * dt;                                   // buoyancy
+            d.vy = std::max(d.vy, -(90 + d.len / S * 40) * S);
+            d.vx *= (1 - 2.5f * dt);
+            d.x += (d.vx + std::sin((float)time * 9 + d.len * 7) * 18 * S) * dt;
+            d.y += d.vy * dt;
+            d.life -= dt;
+            float ys = surfaceY(d.x);
+            if (d.y <= ys + d.len) {                                // pops at the surface
+                ripple(colOf(d.x), 25 * S * d.len / S);
+                if (d.len > 1.8f * S && rnd() < 0.5f) splash(d.x, ys, 0, 0, 1, 0, 70 * S);
+                kill = true;
+            } else if (d.life <= 0) kill = true;
+            break;
+        }
+        case D_RING:
+            d.life -= dt;
+            d.ox += (d.oy - d.ox) * std::min(1.0f, dt * 6);       // spreads out
+            if (d.life <= 0) kill = true;
+            break;
+        case D_SUCK: {
+            if (held < 0 || held >= (int)balls.size()) { kill = true; break; }
+            const Ball& b = balls[held];
+            float dx = b.x - d.x, dy = b.y - d.y, dist = std::sqrt(dx * dx + dy * dy);
+            float sp = (250 + 900 * (1 - d.life)) * S;
+            if (dist < b.r * 0.7f + 2 * S || d.life <= 0) { kill = true; break; }
+            d.x += dx / dist * sp * dt + std::sin(d.ox + (float)time * 14) * 20 * S * dt;
+            d.y += dy / dist * sp * dt;
+            d.life -= dt;
+            break;
+        }
         case D_FOAM:
             d.life -= dt;
             if (d.life <= 0 || swirl < 0.03f) { kill = true; break; }
@@ -609,7 +800,19 @@ void Rain::stepBalls(float dt) {
             if (poolBelow(b.x, b.y) > 0 && b.vol < maxVol) {
                 float rate = (2200 + b.vol * 1.5f / (S * S)) * S * S;
                 float got = takeWater(b.x, 36 * S + b.r, std::min(rate * dt, maxVol - b.vol));
-                if (got > 0) { b.vol += got; b.wobV += got / (S * S) * 0.002f; }
+                if (got > 0) {
+                    b.vol += got; b.wobV += got / (S * S) * 0.002f;
+                    float bx = b.x;
+                    int nsuck = 1 + (int)(got / (25 * S * S));
+                    for (int k = 0; k < nsuck && k < 4; k++) {
+                        Drop d{};
+                        d.kind = D_SUCK;
+                        d.x = bx + rndr(-50, 50) * S; d.y = surfaceY(d.x) + rndr(2, 30) * S;
+                        d.ox = rndr(0, 6.28f); d.life = 1; d.a = rndr(0.4f, 0.8f); d.len = rndr(0.8f, 1.6f) * S;
+                        drops.push_back(d);
+                    }
+                    ripple(colOf(bx), 30 * S);
+                }
             }
             b.r = std::sqrt(b.vol / PI);
             i++;
@@ -664,7 +867,17 @@ void Rain::burstBall(int i, bool intoPool) {
         d.len = rndr(1.0f, 2.0f) * S;
         drops.push_back(d);
     }
+    // some of it hits the screen itself
+    splatScreen(b.x, b.y, std::min(34, 8 + (int)(b.r / (2.5f * S))), b.r * 2.6f + 24 * S, std::min(13 * S, 3.5f * S + b.r * 0.2f));
     if (intoPool) {   // the impact throws a big wave (no water added: the spray brings back what returns)
+        int c0 = colOf(b.x - b.r * 1.5f), c1 = colOf(b.x + b.r * 1.5f);
+        for (int j = c0; j <= c1; j++) { foam[j] = 1; ripple(j, 120 * S); }
+        for (int k = 0; k < (int)(b.r / S); k++) {
+            Drop bb{};
+            bb.kind = D_BUBBLE; bb.x = b.x + rndr(-b.r, b.r); bb.y = surfaceY(b.x) + rndr(4, b.r * 1.5f);
+            bb.vx = rndr(-80, 80) * S; bb.vy = rndr(-50, 50) * S; bb.len = rndr(1.0f, 3.0f) * S; bb.life = 5; bb.a = 0.8f;
+            drops.push_back(bb);
+        }
         int c = colOf(b.x);
         int rad = std::max(2, (int)(b.r / cw));
         for (int k = -rad; k <= rad; k++) {
@@ -741,12 +954,31 @@ void Rain::setCursor(float x, float y, double t, bool valid) {
     } else {
         curVx = curVy = 0;
     }
-    // crossing the water surface fast makes a splash
-    if (valid && cursorValid && cursorPhysics && held < 0) {
+    // dipping the cursor in or pulling it out: a dent, a crown of droplets, rings and bubbles - stronger the faster it goes
+    if (valid && cursorValid && cursorPhysics && held < 0 && meanLevel() > 3 * S) {
         bool was = poolBelow(curX, curY) > 0, now = poolBelow(x, y) > 0;
         float sp = std::sqrt(curVx * curVx + curVy * curVy);
-        if (was != now && sp > 500 * S && meanLevel() > 4 * S)
-            splash(x, surfaceY(x), curVx * 0.2f, 0, 4, 0, std::min(sp * 0.3f, 400 * S));
+        if (was != now && sp > 60 * S) {
+            float ys = surfaceY(x);
+            int c = colOf(x);
+            float e = std::min(sp, 2500 * S);
+            kick(c, (now ? 1.0f : -0.6f) * e * 0.22f);             // in: pushes a dent; out: pulls a little hump
+            ripple(c, e * 0.35f);
+            foam[c] = std::min(1.0f, foam[c] + e / (1200 * S));
+            int n = 2 + (int)(e / (110 * S));
+            splash(x, ys, curVx * 0.15f, 0, std::min(n, 18), 0, std::min(e * 0.45f, 560 * S));
+            Drop r{};
+            r.kind = D_RING; r.x = x; r.ox = 3 * S; r.oy = std::min(14 + e / (60 * S), 45.0f) * S; r.life = r.a = 0.7f;
+            drops.push_back(r);
+            if (now)
+                for (int k = 0; k < 2 + (int)(e / (200 * S)) && k < 14; k++) {
+                    Drop d{};
+                    d.kind = D_BUBBLE;
+                    d.x = x + rndr(-6, 6) * S; d.y = ys + rndr(4, 26) * S;
+                    d.vx = rndr(-60, 60) * S; d.vy = rndr(-40, 80) * S; d.len = rndr(1.0f, 2.8f) * S; d.life = 5; d.a = 0.8f;
+                    drops.push_back(d);
+                }
+        }
     }
     curX = x; curY = y; curT = t; cursorValid = valid;
 }
@@ -819,7 +1051,8 @@ void Rain::inputRects(std::vector<IRect>& out) const {
 void Rain::clearSnow() {
     std::fill(lvl.begin(), lvl.end(), 0.0f);
     std::fill(vel.begin(), vel.end(), 0.0f);
-    drops.clear(); balls.clear(); held = -1;
+    drops.clear(); balls.clear(); held = -1; sdrops.clear();
+    std::fill(rip.begin(), rip.end(), 0.0f); std::fill(ripv.begin(), ripv.end(), 0.0f); std::fill(foam.begin(), foam.end(), 0.0f);
     for (auto& kv : puddles) std::fill(kv.second.h.begin(), kv.second.h.end(), 0.0f);
     swirlE = swirl = 0;
 }
@@ -896,28 +1129,90 @@ void Rain::render(uint32_t* px) const {
         }
     }
 
-    // the pool
+    // the pool (drawn row by row: the buffer is row-major, so this is the cache-friendly order)
     {
-        std::vector<float> sx(W), sy(H);
+        static float SIN[1024];
+        static bool init = false;
+        if (!init) { for (int i = 0; i < 1024; i++) SIN[i] = std::sin(i * 2 * PI / 1024); init = true; }
+        auto fs = [](float v) { return SIN[(int)(v * (1024 / (2 * PI)) + 1048576.0f) & 1023]; };
         float t = (float)time;
-        for (int x = 0; x < W; x++) sx[x] = std::sin(x * 0.043f / S + t * 1.6f) * std::sin(x * 0.011f / S - t * 0.55f);
-        for (int y = 0; y < H; y++) sy[y] = std::sin(y * 0.11f / S - t * 2.1f);
         float deep = std::max(1.0f, maxLevel());
+        std::vector<float> top(W + 2), glint(W), fo(W), caust(W);
+        float minTop = (float)H;
+        for (int x = -1; x <= W; x++) top[x + 1] = surfaceY(x + 0.5f);
         for (int x = 0; x < W; x++) {
-            float top = surfaceY(x + 0.5f);
-            if (top >= H - 0.3f) continue;
-            int iy = std::max(0, (int)std::floor(top));
-            if (iy - 1 >= 0) cv.put(x, iy - 1, 50, 80, 110, 0.12f);        // keeps the line visible over white
-            for (int y = iy; y < H; y++) {
-                float d = y + 0.5f - top;
-                float cov = y == iy ? clampf(iy + 1 - top, 0, 1) : 1.0f;
+            float slope = (top[x + 2] - top[x]) * 0.5f;            // >0: surface going down to the right
+            glint[x] = clampf(-slope * 0.9f, 0, 0.6f);             // faces turned up-left catch the light
+            fo[x] = foam[colOf((float)x)];
+            minTop = std::min(minTop, top[x + 1]);
+        }
+        int y0 = std::max(0, (int)std::floor(minTop) - 1);
+        for (int y = y0; y < H; y++) {
+            uint32_t* row = px + (size_t)y * W;
+            float fy = y / S;
+            bool newC = !(y & 1) || y == y0;
+            for (int x = 0; x < W; x++) {
+                float yt = top[x + 1];
+                if (yt >= H - 0.3f) continue;
+                int iy = (int)std::floor(yt);
+                if (y < iy - 1) continue;
+                if (y == iy - 1) { blend(&row[x], 40, 70, 105, 0.14f); continue; }   // a thin dark edge: readable over white
+                float d = y + 0.5f - yt;
+                float cov = y == iy ? clampf(iy + 1 - yt, 0, 1) : 1.0f;
                 float k = clampf(d / deep, 0, 1);
-                int r = (int)(78 - 55 * k), g = (int)(158 - 72 * k), b = (int)(222 - 62 * k);
-                float a = 0.26f + 0.22f * k + 0.05f * sx[x] * sy[y];
-                if (d < 1.8f * S) { r = 215; g = 238; b = 255; a = 0.75f; }   // the shiny surface line
-                else if (d < 5 * S) { r += 40; g += 30; b += 15; a += 0.04f; }
-                cv.put(x, y, std::min(r, 255), std::min(g, 255), std::min(b, 255), a * cov);
+                // light rippling over the bottom: a moving web of caustics, strongest near the surface
+                // (worked out on a 2x2 grid: it's soft anyway, and it's the expensive part)
+                float c;
+                if (newC && !(x & 1)) {
+                    float fx = x / S;
+                    float w1 = fs(fx * 0.055f + t * 0.9f + fs(fy * 0.045f - t * 0.6f) * 1.4f);
+                    float w2 = fs(fy * 0.075f + fx * 0.018f - t * 1.15f);
+                    c = 1.0f - std::fabs(w1 + w2) * 0.5f;
+                    c = c * c; c = c * c; c = c * c;                   // ^8: thin bright lines
+                    caust[x] = c;
+                    if (x + 1 < W) caust[x + 1] = c;
+                } else c = caust[x];
+                c *= (1 - k) * 0.9f;
+                int r = (int)(70 - 52 * k), g = (int)(150 - 70 * k), b = (int)(215 - 60 * k);
+                float a = 0.24f + 0.26f * k;
+                if (d < 1.6f * S) {                                   // the bright surface line
+                    r = 220; g = 240; b = 255; a = 0.62f + glint[x] * 0.6f;
+                } else if (d < 7 * S) {                               // just under the surface: lighter, foamy
+                    float u = 1 - (d - 1.6f * S) / (5.4f * S);
+                    r += (int)(60 * u); g += (int)(45 * u); b += (int)(25 * u);
+                    a += 0.08f * u + glint[x] * 0.35f * u + fo[x] * 0.45f * u;
+                    if (fo[x] > 0.05f) { r += (int)(120 * fo[x] * u); g += (int)(90 * fo[x] * u); b += (int)(40 * fo[x] * u); }
+                }
+                r = std::min(r + (int)(110 * c), 255); g = std::min(g + (int)(100 * c), 255); b = std::min(b + (int)(60 * c), 255);
+                a = std::min(1.0f, (a + c * 0.12f) * cov);
+                uint32_t v = ((uint32_t)(255 * a + 0.5f) << 24) | ((uint32_t)(r * a + 0.5f) << 16) | ((uint32_t)(g * a + 0.5f) << 8) | (uint32_t)(b * a + 0.5f);
+                if (row[x] == 0) row[x] = v; else blendPre(&row[x], v);
+                // well under the surface the next pixel looks the same: reuse it (halves the work)
+                if (!(x & 1) && x + 1 < W && d > 8 * S && y + 0.5f - top[x + 2] > 8 * S) {
+                    x++;
+                    if (row[x] == 0) row[x] = v; else blendPre(&row[x], v);
+                }
             }
+        }
+    }
+
+    // rings spreading where drops landed, bubbles rising, water flowing up into a ball being scooped
+    for (const auto& d : drops) {
+        if (d.kind == D_RING) {
+            float ys = surfaceY(d.x) + 0.5f * S;
+            float a = d.a * (d.life / std::max(0.01f, d.a));
+            int n = std::max(8, (int)(d.ox * 2));
+            for (int k = 0; k < n; k++) {
+                float ang = k * 2 * PI / n;
+                float px = d.x + std::cos(ang) * d.ox, py = ys + std::sin(ang) * d.ox * 0.22f;
+                cv.put((int)px, (int)py, 230, 245, 255, a * (std::sin(ang) > 0 ? 0.35f : 0.7f));
+            }
+        } else if (d.kind == D_BUBBLE) {
+            cv.dot(d.x, d.y, d.len + 0.6f, 230, 245, 255, 0.35f * d.a);
+            cv.dot(d.x, d.y, std::max(0.4f, d.len - 0.6f * S), 70, 140, 200, 0.35f * d.a);
+            cv.dot(d.x - d.len * 0.35f, d.y - d.len * 0.35f, 0.6f * S, 255, 255, 255, 0.9f * d.a);
+        } else if (d.kind == D_SUCK) {
+            cv.dot(d.x, d.y, d.len, 200, 230, 255, d.a);
         }
     }
 
@@ -967,7 +1262,52 @@ void Rain::render(uint32_t* px) const {
                 float spec = std::max(0.0f, -0.45f * nx - 0.55f * ny + 0.7f * nz);
                 spec = std::pow(spec, 18.0f);
                 cv.put(x, y, r, g, bl, a * cov);
+                float bot = clampf(ny, 0, 1) * edge * edge;                // light focused through the ball
+                cv.put(x, y, 240, 250, 255, 0.45f * bot * cov);
                 if (spec > 0.02f) cv.put(x, y, 255, 255, 255, spec * 0.95f * cov);
+            }
+    }
+
+    // drops on the screen glass: little lenses, with their wet trails
+    for (const auto& d : sdrops) {
+        if (d.trail > 2 * S) {
+            float w = std::max(0.6f * S, d.r * 0.45f);
+            int y0 = (int)(d.y - d.trail), y1 = (int)(d.y - d.r * 0.5f);
+            for (int y = std::max(0, y0); y < std::min(H, y1); y++) {
+                float u = (y - y0) / std::max(1.0f, (float)(y1 - y0));
+                for (int x = (int)(d.x - w); x <= (int)(d.x + w); x++) {
+                    float e = std::fabs(x + 0.5f - d.x) / w;
+                    if (e > 1) continue;
+                    cv.put(x, y, 215, 232, 250, 0.10f * u * (1 - e * 0.5f));
+                    if (e > 0.7f) cv.put(x, y, 40, 60, 90, 0.08f * u);
+                }
+            }
+        }
+        float rx = d.r, ry = d.r * (d.vy > 1 ? 1.18f : 1.0f);
+        int x0 = std::max(0, (int)(d.x - rx - 3)), x1 = std::min(W - 1, (int)(d.x + rx + 3));
+        int y0 = std::max(0, (int)(d.y - ry - 3)), y1 = std::min(H - 1, (int)(d.y + ry + 4));
+        for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++) {
+                float nx = (x + 0.5f - d.x) / rx, ny = (y + 0.5f - d.y) / ry;
+                float dd = nx * nx + ny * ny;
+                // soft shadow below-right
+                float sx = (x + 0.5f - d.x - 0.9f * S) / rx, sy = (y + 0.5f - d.y - 1.3f * S) / ry;
+                float sd = sx * sx + sy * sy;
+                if (dd > 1 && sd < 1) { cv.put(x, y, 20, 30, 45, 0.16f * (1 - sd)); continue; }
+                if (dd > 1.0f + 2.0f / d.r) continue;
+                float cov = clampf((1.0f - std::sqrt(dd)) * d.r + 0.5f, 0, 1);
+                float nz = std::sqrt(std::max(0.0f, 1 - dd));
+                float edge = 1 - nz;
+                // dark rim on top (the lens flips the dark sky), bright caustic at the bottom
+                float rim = edge * edge * edge;
+                float topDark = clampf(-ny, 0, 1) * rim;
+                float botLight = clampf(ny, 0, 1) * edge * edge;
+                cv.put(x, y, 165, 195, 230, (0.14f + 0.18f * edge) * cov);
+                cv.put(x, y, 10, 22, 45, (0.75f * topDark + 0.28f * rim) * cov);
+                cv.put(x, y, 245, 252, 255, 0.75f * botLight * cov);
+                float spec = std::max(0.0f, -0.5f * nx - 0.6f * ny + 0.62f * nz);
+                spec = spec * spec; spec = spec * spec; spec = spec * spec; spec = spec * spec;   // ^16
+                if (spec > 0.02f) cv.put(x, y, 255, 255, 255, std::min(1.0f, spec * 1.1f) * cov);
             }
     }
 }

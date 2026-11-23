@@ -45,12 +45,15 @@ The snow hides itself while a fullscreen game or video is in front.
 Pick **Weather → Rain** in the tray menu (the snow and the water are both kept, switch back any time).
 
 - Raindrops fall in the wind and splash on the tops of windows, on the cursor and on the water.
+- Some land on the screen itself, as if on the glass: little lenses that bead up, run together and slide down leaving wet trails.
 - Windows get wet: drops land on the glass and run down it, water collects on the top edge and trickles down the sides.
   Close, minimize or shake a window and its water pours off.
 - Water collects at the bottom of the screen with real waves, rising slowly to at most about a sixth of the screen
   and soaking away on its own. It is see-through and clicks pass through it, so the taskbar keeps working.
+- Move the cursor through the water and it behaves like a body in it: a bow wave in front, a trough behind, bubbles trailing,
+  a dent and a crown of droplets when you dip in, ripples and light dancing on the bottom.
 - **Scoop a water ball:** press and hold the mouse in the water; the ball grows and the water level drops. Throw it and it
-  bursts on a window, the screen edge or the water. Most of that water turns to spray and is gone, only about a quarter comes back.
+  bursts on a window, the screen edge or the water and splashes the screen. Most of that water turns to spray and is gone, only about a quarter comes back.
 - **Whirlpool:** stir the water quickly in circles with the cursor; it fades a few seconds after you stop.
 - "Make it pour" starts a short downpour, "Drain the water" empties the pool.
 

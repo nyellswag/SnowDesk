@@ -36,6 +36,7 @@ public:
     float poolVolume() const;
     size_t dropCount() const { return drops.size(); }
     size_t ballCount() const { return balls.size(); }
+    size_t screenDropCount() const { return sdrops.size(); }
     float swirlStrength() const { return swirl; }
     float puddleVolume() const;
 
@@ -47,6 +48,13 @@ private:
         D_GLASS,     // a drop stuck on a window's face, sliding down it
         D_RUNNER,    // water running down a window's side edge
         D_FOAM,      // a fleck of foam circling in a whirlpool
+        D_BUBBLE,    // an air bubble rising through the pool
+        D_RING,      // a ring spreading on the water where a drop landed
+        D_SUCK,      // water being drawn up into the ball you're scooping
+    };
+    struct SDrop {           // a drop on the screen itself, as if on the glass in front of the desktop
+        float x, y, r;       // r: radius (px)
+        float vy, trail, hold, life, travelled;
     };
     struct Drop {
         float x, y, vx, vy;
@@ -86,6 +94,10 @@ private:
     float cw = 3;                // column width (px)
     int NC = 0;
     std::vector<float> lvl, vel;
+    std::vector<float> rip, ripv;    // fine, fast ripples on top of the big waves (carry no water)
+    std::vector<float> foam;         // white water at the surface after a disturbance
+    std::vector<SDrop> sdrops;
+    float screenAcc = 0;
 
     std::vector<Drop> drops;
     std::unordered_map<uint64_t, Puddle> puddles;
@@ -108,7 +120,11 @@ private:
     float surfaceY(float x) const;                // screen y of the water surface at x
     int colOf(float x) const;
     void addWater(float x, float vol, float push);
-    void kick(int col, float v); // pour vol into the pool at x, pushing the surface down by push px/s
+    void kick(int col, float v);
+    void ripple(int col, float v);
+    void splatScreen(float x, float y, int n, float spread, float maxR);
+    void stepScreen(float dt);
+    float surfaceAt(int col) const { return lvl[col] + rip[col]; } // pour vol into the pool at x, pushing the surface down by push px/s
     float takeWater(float x, float radius, float vol);   // returns what it could take
     float poolBelow(float x, float y) const;      // water depth under (x, y), 0 if above the surface
     int topWindowAt(float x, float y) const;      // index in wins of the topmost window containing the point, -1 none
