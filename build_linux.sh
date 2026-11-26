@@ -4,7 +4,7 @@
 # If zig is available (pip install ziglang), the binary targets glibc 2.28 so it runs on older distributions too.
 set -e
 cd "$(dirname "$0")"
-SRC="src/linux/main_linux.cpp src/sim.cpp src/rain.cpp"
+SRC="src/linux/main_linux.cpp src/sim.cpp"
 CFLAGS="-O2 -std=c++17 $(pkg-config --cflags xft)"
 LIBS="-lX11 -lXext -lXrandr -lXft -lXtst -lfontconfig"
 if python3 -c "import ziglang" 2>/dev/null; then

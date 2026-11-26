@@ -6,11 +6,9 @@ SnowDesk puts snow on your desktop, on Windows and Linux. Flakes fall across the
 When you close, minimize or move a window, the snow on it falls to the ground above the taskbar.
 You can scoop up the snow, make snowballs, throw them and stack them into a snowman.
 
-There is also a **rain** mode (tray menu → **Weather → Rain**), described [below](#rain).
-
 ## Getting started
 
-1. **[⬇ Download SnowDesk.exe](https://github.com/nyellswag/SnowDesk/raw/main/download/SnowDesk.exe)**: a single file of about 390 KB that runs on Windows 10 and 11. Put it in any folder and double-click it.
+1. **[⬇ Download SnowDesk.exe](https://github.com/nyellswag/SnowDesk/raw/main/download/SnowDesk.exe)**: a single file of about 330 KB that runs on Windows 10 and 11. Put it in any folder and double-click it.
    If the program is on drive C: and you also have a D: drive, it will offer once to move itself to `D:\SnowDesk`.
 2. Windows may show "Windows protected your PC". This happens because the app has no paid code-signing certificate.
    Click **More info → Run anyway**.
@@ -39,23 +37,6 @@ The menu has Play Mode, pause, snowfall strength (light, normal, heavy, blizzard
 The interface is in English by default; switch it to Russian in the tray menu under **Language / Язык**.
 
 The snow hides itself while a fullscreen game or video is in front.
-
-## Rain
-
-Pick **Weather → Rain** in the tray menu (the snow and the water are both kept, switch back any time).
-
-- Raindrops fall in the wind and splash on the tops of windows, on the cursor and on the water.
-- Some land on the screen itself, as if on the glass: little lenses that bead up, run together and slide down leaving wet trails.
-- Windows get wet: drops land on the glass and run down it, water collects on the top edge and trickles down the sides.
-  Close, minimize or shake a window and its water pours off.
-- Water collects at the bottom of the screen with real waves, rising slowly to at most about a sixth of the screen
-  and soaking away on its own. It is see-through and clicks pass through it, so the taskbar keeps working.
-- Move the cursor through the water and it behaves like a body in it: a bow wave in front, a trough behind, bubbles trailing,
-  a dent and a crown of droplets when you dip in, ripples and light dancing on the bottom.
-- **Scoop a water ball:** press and hold the mouse in the water; the ball grows and the water level drops. Throw it and it
-  bursts on a window, the screen edge or the water and splashes the screen. Most of that water turns to spray and is gone, only about a quarter comes back.
-- **Whirlpool:** stir the water quickly in circles with the cursor; it fades a few seconds after you stop.
-- "Make it pour" starts a short downpour, "Drain the water" empties the pool.
 
 ## Linux
 
@@ -101,7 +82,7 @@ and nothing else is left in it.
 - Memory: about 15–30 MB while running (about 45 MB on a 4K screen), and 0 after you exit.
 - CPU: about 1–3% at 30 frames per second. Play mode runs at 60 frames per second and uses a little more.
   When paused or behind a fullscreen app, usage is close to 0.
-- Size: one file of about 390 KB with no dependencies.
+- Size: one file of about 330 KB with no dependencies.
 
 ## Building from source
 
